@@ -73,6 +73,9 @@ pub enum SystemMessage {
     SecurejoinMessage = 7,
     LocationStreamingEnabled = 8,
     LocationOnly = 9,
+
+    /// Chat autodelete timer is changed.
+    AutodeleteTimerChanged = 10,
 }
 
 impl Default for SystemMessage {
@@ -209,6 +212,8 @@ impl MimeMessage {
         } else if let Some(value) = self.get(HeaderDef::ChatContent) {
             if value == "location-streaming-enabled" {
                 self.is_system_message = SystemMessage::LocationStreamingEnabled;
+            } else if value == "autodelete-timer-changed" {
+                self.is_system_message = SystemMessage::AutodeleteTimerChanged;
             }
         }
         Ok(())
