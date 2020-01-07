@@ -205,44 +205,6 @@ pub async fn dc_receive_imf(
         };
     }
 
-    let timer = if let Some(value) = mime_parser.get(HeaderDef::AutodeleteTimer) {
-        match value.parse::<u32>() {
-            Ok(timer) => timer,
-            Err(err) => {
-                warn!(
-                    context,
-                    "can't parse autodelete timer \"{}\": {}", value, err
-                );
-                0
-            }
-        }
-    } else {
-        0
-    };
-
-    if chat::get_autodelete_timer(context, chat_id).await != timer {
-        match chat::inner_set_autodelete_timer(context, chat_id, timer).await {
-            Ok(()) => {
-                let stock_str = context
-                    .stock_system_msg(
-                        StockMessage::MsgAutodeleteTimerChanged,
-                        timer.to_string(),
-                        "",
-                        from_id,
-                    )
-                    .await;
-                chat::add_info_msg(context, chat_id, stock_str).await;
-                context.emit_event(Event::ChatAutodeleteTimerModified { chat_id, timer });
-            }
-            Err(err) => {
-                warn!(
-                    context,
-                    "failed to modify timer for chat {}: {}", chat_id, err
-                );
-            }
-        }
-    }
-
     // Get user-configured server deletion
     let delete_server_after = context.get_config_delete_server_after().await;
 
@@ -668,6 +630,49 @@ async fn add_parts(
         &mut rcvd_timestamp,
     )
     .await;
+
+    // Extract autodelete timer from the message.
+    let timer = if let Some(value) = mime_parser.get(HeaderDef::AutodeleteTimer) {
+        match value.parse::<u32>() {
+            Ok(timer) => timer,
+            Err(err) => {
+                warn!(
+                    context,
+                    "can't parse autodelete timer \"{}\": {}", value, err
+                );
+                0
+            }
+        }
+    } else {
+        0
+    };
+
+    // Apply autodelete timer changes to the chat.
+    if chat::get_autodelete_timer(context, *chat_id).await != timer {
+        match chat::inner_set_autodelete_timer(context, *chat_id, timer).await {
+            Ok(()) => {
+                let stock_str = context
+                    .stock_system_msg(
+                        StockMessage::MsgAutodeleteTimerChanged,
+                        timer.to_string(),
+                        "",
+                        from_id,
+                    )
+                    .await;
+                chat::add_info_msg(context, *chat_id, stock_str).await;
+                context.emit_event(Event::ChatAutodeleteTimerModified {
+                    chat_id: *chat_id,
+                    timer,
+                });
+            }
+            Err(err) => {
+                warn!(
+                    context,
+                    "failed to modify timer for chat {}: {}", chat_id, err
+                );
+            }
+        }
+    }
 
     // unarchive chat
     chat_id.unarchive(context).await?;
