@@ -1250,6 +1250,27 @@ async fn open(
             .await?;
             sql.set_raw_config_int(context, "dbversion", 64).await?;
         }
+        if dbversion < 65 {
+            info!(context, "[migration] v65");
+            // Timer value in seconds. For incoming messages this
+            // timer starts when message is read, so we want to have
+            // the value stored here until the timer starts.
+            sql.execute(
+                "ALTER TABLE msgs ADD COLUMN autodelete_timer INTEGER;",
+                paramsv![],
+            )
+            .await?;
+            // Timestamp indicating when the message should be
+            // deleted. It is convenient to store it here because UI
+            // needs this value to display how much time is left until
+            // the message is deleted.
+            sql.execute(
+                "ALTER TABLE msgs ADD COLUMN autodelete_timestamp INTEGER;",
+                paramsv![],
+            )
+            .await?;
+            sql.set_raw_config_int(context, "dbversion", 65).await?;
+        }
 
         // (2) updates that require high-level objects
         // (the structure is complete now and all objects are usable)
