@@ -866,13 +866,24 @@ impl<'a, 'b> MimeFactory<'a, 'b> {
 
         if self.attach_selfavatar {
             match context.get_config(Config::Selfavatar) {
-                Some(path) => match build_selfavatar_file(context, &path) {
-                    Ok((part, filename)) => {
-                        parts.push(part);
-                        protected_headers.push(Header::new("Chat-User-Avatar".into(), filename))
-                    }
-                    Err(err) => warn!(context, "mimefactory: cannot attach selfavatar: {}", err),
-                },
+                Some(path) => {
+                    match build_selfavatar_file(context, &path) {
+                        Ok((part, filename)) => {
+                            parts.push(part);
+                            protected_headers.push(Header::new("Chat-User-Avatar".into(), filename))
+                        }
+                        Err(err) => {
+                            warn!(context, "mimefactory: cannot attach selfavatar: {}", err)
+                        }
+                    };
+
+                    match build_vcard_part(context, &path) {
+                        Ok(part) => {
+                            parts.push(part);
+                        }
+                        Err(err) => warn!(context, "mimefactory: cannot build vCard: {}", err),
+                    };
+                }
                 None => protected_headers.push(Header::new("Chat-User-Avatar".into(), "0".into())),
             }
         }
@@ -1059,6 +1070,73 @@ fn build_body_file(
         .body(encoded_body);
 
     Ok((mail, filename_to_send))
+}
+
+fn build_vcard_file(context: &Context, avatar_path: &str) -> Result<String, Error> {
+    let _avatar_blob = BlobObject::from_path(context, avatar_path)?;
+
+    let file = concat!(
+    "BEGIN:VCARD\n",
+    "VERSION:4.0\n",
+    "KIND:individual\n",
+    "FN:display name goes here\n",
+    "PHOTO:data:image/png;base64,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
+pSmQAAAAAElFTkSuQmCC\n",
+    "END:VCARD"
+    );
+    Ok(file.to_string())
+}
+
+fn build_vcard_part(context: &Context, avatar_path: &str) -> Result<PartBuilder, Error> {
+    let body = build_vcard_file(context, avatar_path)?;
+    let encoded_body = wrapped_base64_encode(&body.as_bytes());
+
+    let part = PartBuilder::new()
+        .content_type(&mime::TEXT_VCARD)
+        .header((
+            "Content-Disposition",
+            "attachment; filename=\"{avatar.vcf}\"",
+        ))
+        .header(("Content-Transfer-Encoding", "base64"))
+        .body(encoded_body);
+
+    Ok(part)
 }
 
 fn build_selfavatar_file(context: &Context, path: &str) -> Result<(PartBuilder, String), Error> {
