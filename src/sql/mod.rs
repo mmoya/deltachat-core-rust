@@ -46,6 +46,8 @@ pub enum Error {
     BlobError(#[from] crate::blob::BlobError),
     #[error("{0}")]
     Other(#[from] crate::error::Error),
+    #[error("{0}")]
+    Sqlx(#[from] sqlx::Error),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -72,8 +74,7 @@ impl Sql {
     }
 
     pub async fn is_open(&self) -> bool {
-        self.pool.read().await.is_some()
-        // self.xpool.read().await.is_some()
+        self.pool.read().await.is_some() && self.xpool.read().await.is_some()
     }
 
     pub async fn close(&self) {
@@ -112,6 +113,32 @@ impl Sql {
         };
 
         res.map_err(Into::into)
+    }
+
+    pub async fn xexecute<S: AsRef<str>>(
+        &self,
+        statement: S,
+        params: sqlx::sqlite::SqliteArguments,
+    ) -> Result<()> {
+        let lock = self.xpool.read().await;
+        let xpool = lock.as_ref().ok_or_else(|| Error::SqlNoConnection)?;
+
+        sqlx::query(statement.as_ref())
+            .bind_all(params)
+            .execute(xpool)
+            .await?;
+
+        Ok(())
+    }
+
+    /// Execute a list of statements, without any bindings
+    pub async fn xexecute_batch<S: AsRef<str>>(&self, statement: S) -> Result<()> {
+        let lock = self.xpool.read().await;
+        let xpool = lock.as_ref().ok_or_else(|| Error::SqlNoConnection)?;
+
+        sqlx::query(statement.as_ref()).execute(xpool).await?;
+
+        Ok(())
     }
 
     pub async fn execute_batch<S: AsRef<str>>(&self, sql: S) -> Result<()> {
@@ -692,6 +719,16 @@ async fn open(
 
     {
         *sql.pool.write().await = Some(pool);
+    }
+
+    let xpool = sqlx::SqlitePool::builder()
+        .min_size(1)
+        .max_size(1)
+        .build(&format!("sqlite://{}", dbfile.as_ref().to_string_lossy()))
+        .await?;
+
+    {
+        *sql.xpool.write().await = Some(xpool)
     }
 
     if !readonly {

@@ -13,7 +13,7 @@ pub async fn run(
         if dbversion < version {
             info!(context, "[migration] v{}", version);
 
-            sql.execute_batch(stmt).await?;
+            sql.xexecute_batch(stmt).await?;
             sql.set_raw_config_int(context, "dbversion", version)
                 .await?;
         }
