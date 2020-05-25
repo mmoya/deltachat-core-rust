@@ -82,21 +82,23 @@ impl Sql {
         // drop closes the connection
     }
 
-    // return true on success, false on failure
-    pub async fn open<T: AsRef<Path>>(&self, context: &Context, dbfile: T, readonly: bool) -> bool {
-        match open(context, self, dbfile, readonly).await {
-            Ok(_) => true,
-            Err(err) => {
-                error!(context, "{}", err);
-                match err.downcast_ref::<Error>() {
-                    Some(Error::SqlAlreadyOpen) => false,
-                    _ => {
-                        self.close().await;
-                        false
-                    }
+    pub async fn open<T: AsRef<Path>>(
+        &self,
+        context: &Context,
+        dbfile: T,
+        readonly: bool,
+    ) -> crate::error::Result<()> {
+        if let Err(err) = open(context, self, dbfile, readonly).await {
+            return match err.downcast_ref::<Error>() {
+                Some(Error::SqlAlreadyOpen) => Err(err),
+                _ => {
+                    self.close().await;
+                    Err(err)
                 }
-            }
+            };
         }
+
+        Ok(())
     }
 
     pub async fn execute<S: AsRef<str>>(
@@ -703,157 +705,9 @@ async fn open(
             .ok();
 
         let mut exists_before_update = false;
-        let mut dbversion_before_update: i32 = 0;
-        /* Init tables to dbversion=0 */
-        if !sql.table_exists("config").await? {
-            info!(
-                context,
-                "First time init: creating tables in {:?}.",
-                dbfile.as_ref(),
-            );
-            sql.execute(
-                "CREATE TABLE config (id INTEGER PRIMARY KEY, keyname TEXT, value TEXT);",
-                paramsv![],
-            )
-            .await?;
-            sql.execute(
-                "CREATE INDEX config_index1 ON config (keyname);",
-                paramsv![],
-            )
-            .await?;
-            sql.execute(
-                "CREATE TABLE contacts (\
-                 id INTEGER PRIMARY KEY AUTOINCREMENT, \
-                 name TEXT DEFAULT '', \
-                 addr TEXT DEFAULT '' COLLATE NOCASE, \
-                 origin INTEGER DEFAULT 0, \
-                 blocked INTEGER DEFAULT 0, \
-                 last_seen INTEGER DEFAULT 0, \
-                 param TEXT DEFAULT '');",
-                paramsv![],
-            )
-            .await?;
-            sql.execute(
-                "CREATE INDEX contacts_index1 ON contacts (name COLLATE NOCASE);",
-                paramsv![],
-            )
-            .await?;
-            sql.execute(
-                "CREATE INDEX contacts_index2 ON contacts (addr COLLATE NOCASE);",
-                paramsv![],
-            )
-            .await?;
-            sql.execute(
-                "INSERT INTO contacts (id,name,origin) VALUES \
-                 (1,'self',262144), (2,'info',262144), (3,'rsvd',262144), \
-                 (4,'rsvd',262144), (5,'device',262144), (6,'rsvd',262144), \
-                 (7,'rsvd',262144), (8,'rsvd',262144), (9,'rsvd',262144);",
-                paramsv![],
-            )
-            .await?;
-            sql.execute(
-                "CREATE TABLE chats (\
-                 id INTEGER PRIMARY KEY AUTOINCREMENT,  \
-                 type INTEGER DEFAULT 0, \
-                 name TEXT DEFAULT '', \
-                 draft_timestamp INTEGER DEFAULT 0, \
-                 draft_txt TEXT DEFAULT '', \
-                 blocked INTEGER DEFAULT 0, \
-                 grpid TEXT DEFAULT '', \
-                 param TEXT DEFAULT '');",
-                paramsv![],
-            )
-            .await?;
-            sql.execute("CREATE INDEX chats_index1 ON chats (grpid);", paramsv![])
-                .await?;
-            sql.execute(
-                "CREATE TABLE chats_contacts (chat_id INTEGER, contact_id INTEGER);",
-                paramsv![],
-            )
-            .await?;
-            sql.execute(
-                "CREATE INDEX chats_contacts_index1 ON chats_contacts (chat_id);",
-                paramsv![],
-            )
-            .await?;
-            sql.execute(
-                "INSERT INTO chats (id,type,name) VALUES \
-                 (1,120,'deaddrop'), (2,120,'rsvd'), (3,120,'trash'), \
-                 (4,120,'msgs_in_creation'), (5,120,'starred'), (6,120,'archivedlink'), \
-                 (7,100,'rsvd'), (8,100,'rsvd'), (9,100,'rsvd');",
-                paramsv![],
-            )
-            .await?;
-            sql.execute(
-                "CREATE TABLE msgs (\
-                 id INTEGER PRIMARY KEY AUTOINCREMENT, \
-                 rfc724_mid TEXT DEFAULT '', \
-                 server_folder TEXT DEFAULT '', \
-                 server_uid INTEGER DEFAULT 0, \
-                 chat_id INTEGER DEFAULT 0, \
-                 from_id INTEGER DEFAULT 0, \
-                 to_id INTEGER DEFAULT 0, \
-                 timestamp INTEGER DEFAULT 0, \
-                 type INTEGER DEFAULT 0, \
-                 state INTEGER DEFAULT 0, \
-                 msgrmsg INTEGER DEFAULT 1, \
-                 bytes INTEGER DEFAULT 0, \
-                 txt TEXT DEFAULT '', \
-                 txt_raw TEXT DEFAULT '', \
-                 param TEXT DEFAULT '');",
-                paramsv![],
-            )
-            .await?;
-            sql.execute("CREATE INDEX msgs_index1 ON msgs (rfc724_mid);", paramsv![])
-                .await?;
-            sql.execute("CREATE INDEX msgs_index2 ON msgs (chat_id);", paramsv![])
-                .await?;
-            sql.execute("CREATE INDEX msgs_index3 ON msgs (timestamp);", paramsv![])
-                .await?;
-            sql.execute("CREATE INDEX msgs_index4 ON msgs (state);", paramsv![])
-                .await?;
-            sql.execute(
-                "INSERT INTO msgs (id,msgrmsg,txt) VALUES \
-                 (1,0,'marker1'), (2,0,'rsvd'), (3,0,'rsvd'), \
-                 (4,0,'rsvd'), (5,0,'rsvd'), (6,0,'rsvd'), (7,0,'rsvd'), \
-                 (8,0,'rsvd'), (9,0,'daymarker');",
-                paramsv![],
-            )
-            .await?;
-            sql.execute(
-                "CREATE TABLE jobs (\
-                 id INTEGER PRIMARY KEY AUTOINCREMENT, \
-                 added_timestamp INTEGER, \
-                 desired_timestamp INTEGER DEFAULT 0, \
-                 action INTEGER, \
-                 foreign_id INTEGER, \
-                 param TEXT DEFAULT '');",
-                paramsv![],
-            )
-            .await?;
-            sql.execute(
-                "CREATE INDEX jobs_index1 ON jobs (desired_timestamp);",
-                paramsv![],
-            )
-            .await?;
-            if !sql.table_exists("config").await?
-                || !sql.table_exists("contacts").await?
-                || !sql.table_exists("chats").await?
-                || !sql.table_exists("chats_contacts").await?
-                || !sql.table_exists("msgs").await?
-                || !sql.table_exists("jobs").await?
-            {
-                error!(
-                    context,
-                    "Cannot create tables in new database \"{:?}\".",
-                    dbfile.as_ref(),
-                );
-                // cannot create the tables - maybe we cannot write?
-                return Err(Error::SqlFailedToOpen.into());
-            } else {
-                sql.set_raw_config_int(context, "dbversion", 0).await?;
-            }
-        } else {
+        let mut dbversion_before_update: i32 = -1;
+
+        if sql.table_exists("config").await? {
             exists_before_update = true;
             dbversion_before_update = sql
                 .get_raw_config_int(context, "dbversion")

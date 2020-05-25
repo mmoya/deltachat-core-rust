@@ -12,7 +12,6 @@ pub async fn run(
     let migrate = |version: i32, stmt: &'static str| async move {
         if dbversion < version {
             info!(context, "[migration] v{}", version);
-            println!("[migration] v{}", version);
 
             sql.execute_batch(stmt).await?;
             sql.set_raw_config_int(context, "dbversion", version)
@@ -21,6 +20,77 @@ pub async fn run(
 
         Ok::<_, Error>(())
     };
+
+    migrate(
+        0,
+        r#"
+CREATE TABLE config (id INTEGER PRIMARY KEY, keyname TEXT, value TEXT);
+CREATE INDEX config_index1 ON config (keyname);
+CREATE TABLE contacts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT DEFAULT '',
+  addr TEXT DEFAULT '' COLLATE NOCASE,
+  origin INTEGER DEFAULT 0,
+  blocked INTEGER DEFAULT 0,
+  last_seen INTEGER DEFAULT 0,
+  param TEXT DEFAULT '');
+CREATE INDEX contacts_index1 ON contacts (name COLLATE NOCASE);
+CREATE INDEX contacts_index2 ON contacts (addr COLLATE NOCASE);
+INSERT INTO contacts (id,name,origin) VALUES
+  (1,'self',262144), (2,'info',262144), (3,'rsvd',262144),
+  (4,'rsvd',262144), (5,'device',262144), (6,'rsvd',262144),
+  (7,'rsvd',262144), (8,'rsvd',262144), (9,'rsvd',262144);
+CREATE TABLE chats (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  type INTEGER DEFAULT 0,
+  name TEXT DEFAULT '',
+  draft_timestamp INTEGER DEFAULT 0,
+  draft_txt TEXT DEFAULT '',
+  blocked INTEGER DEFAULT 0,
+  grpid TEXT DEFAULT '',
+  param TEXT DEFAULT '');
+CREATE INDEX chats_index1 ON chats (grpid);
+CREATE TABLE chats_contacts (chat_id INTEGER, contact_id INTEGER);
+CREATE INDEX chats_contacts_index1 ON chats_contacts (chat_id);
+INSERT INTO chats (id,type,name) VALUES
+  (1,120,'deaddrop'), (2,120,'rsvd'), (3,120,'trash'),
+  (4,120,'msgs_in_creation'), (5,120,'starred'), (6,120,'archivedlink'),
+  (7,100,'rsvd'), (8,100,'rsvd'), (9,100,'rsvd');
+CREATE TABLE msgs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  rfc724_mid TEXT DEFAULT '',
+  server_folder TEXT DEFAULT '',
+  server_uid INTEGER DEFAULT 0,
+  chat_id INTEGER DEFAULT 0,
+  from_id INTEGER DEFAULT 0,
+  to_id INTEGER DEFAULT 0,
+  timestamp INTEGER DEFAULT 0,
+  type INTEGER DEFAULT 0,
+  state INTEGER DEFAULT 0,
+  msgrmsg INTEGER DEFAULT 1,
+  bytes INTEGER DEFAULT 0,
+  txt TEXT DEFAULT '',
+  txt_raw TEXT DEFAULT '',
+  param TEXT DEFAULT '');
+CREATE INDEX msgs_index1 ON msgs (rfc724_mid);
+CREATE INDEX msgs_index2 ON msgs (chat_id);
+CREATE INDEX msgs_index3 ON msgs (timestamp);
+CREATE INDEX msgs_index4 ON msgs (state);
+INSERT INTO msgs (id,msgrmsg,txt) VALUES
+  (1,0,'marker1'), (2,0,'rsvd'), (3,0,'rsvd'),
+  (4,0,'rsvd'), (5,0,'rsvd'), (6,0,'rsvd'), (7,0,'rsvd'),
+  (8,0,'rsvd'), (9,0,'daymarker');
+CREATE TABLE jobs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  added_timestamp INTEGER,
+  desired_timestamp INTEGER DEFAULT 0,
+  action INTEGER,
+  foreign_id INTEGER,
+  param TEXT DEFAULT '');
+CREATE INDEX jobs_index1 ON jobs (desired_timestamp);
+"#,
+    )
+    .await?;
 
     migrate(
         1,
