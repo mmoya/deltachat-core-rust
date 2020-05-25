@@ -6,7 +6,7 @@
 use std::fmt;
 use std::future::Future;
 
-use deltachat_derive::{FromSql, ToSql};
+use deltachat_derive::*;
 use itertools::Itertools;
 use rand::{thread_rng, Rng};
 
@@ -37,7 +37,9 @@ use crate::sql;
 const JOB_RETRIES: u32 = 17;
 
 /// Thread IDs
-#[derive(Debug, Display, Copy, Clone, PartialEq, Eq, FromPrimitive, ToPrimitive, FromSql, ToSql)]
+#[derive(
+    Debug, Display, Copy, Clone, PartialEq, Eq, FromPrimitive, ToPrimitive, FromSql, ToSql, Sqlx,
+)]
 #[repr(i32)]
 pub(crate) enum Thread {
     Unknown = 0,
@@ -86,6 +88,7 @@ impl Default for Thread {
     ToPrimitive,
     FromSql,
     ToSql,
+    Sqlx,
 )]
 #[repr(i32)]
 pub enum Action {
@@ -180,7 +183,7 @@ impl Job {
         if self.job_id != 0 {
             context
                 .sql
-                .execute("DELETE FROM jobs WHERE id=?;", paramsv![self.job_id as i32])
+                .execute("DELETE FROM jobs WHERE id=?;", paramsx![self.job_id as i32])
                 .await?;
         }
 
@@ -200,22 +203,22 @@ impl Job {
                 .sql
                 .execute(
                     "UPDATE jobs SET desired_timestamp=?, tries=?, param=? WHERE id=?;",
-                    paramsv![
+                    paramsx![
                         self.desired_timestamp,
                         self.tries as i64,
                         self.param.to_string(),
-                        self.job_id as i32,
+                        self.job_id as i32
                     ],
                 )
                 .await?;
         } else {
             context.sql.execute(
                 "INSERT INTO jobs (added_timestamp, thread, action, foreign_id, param, desired_timestamp) VALUES (?,?,?,?,?,?);",
-                paramsv![
+                paramsx![
                     self.added_timestamp,
                     thread,
                     self.action,
-                    self.foreign_id,
+                    self.foreign_id as i32,
                     self.param.to_string(),
                     self.desired_timestamp
                 ]
@@ -656,13 +659,18 @@ impl Job {
 pub async fn kill_action(context: &Context, action: Action) -> bool {
     context
         .sql
-        .execute("DELETE FROM jobs WHERE action=?;", paramsv![action])
+        .execute("DELETE FROM jobs WHERE action=?;", paramsx![action])
         .await
         .is_ok()
 }
 
 /// Remove jobs with specified IDs.
 async fn kill_ids(context: &Context, job_ids: &[u32]) -> sql::Result<()> {
+    use sqlx::arguments::Arguments;
+    let mut args = sqlx::sqlite::SqliteArguments::default();
+    for job_id in job_ids {
+        args.add(*job_id as i32);
+    }
     context
         .sql
         .execute(
@@ -670,7 +678,7 @@ async fn kill_ids(context: &Context, job_ids: &[u32]) -> sql::Result<()> {
                 "DELETE FROM jobs WHERE id IN({})",
                 job_ids.iter().map(|_| "?").join(",")
             ),
-            job_ids.iter().map(|i| i as &dyn crate::ToSql).collect(),
+            args,
         )
         .await?;
     Ok(())
@@ -1119,7 +1127,7 @@ LIMIT 1;
                     Ok(id) => {
                         context
                             .sql
-                            .execute("DELETE FROM jobs WHERE id=?;", paramsv![id])
+                            .execute("DELETE FROM jobs WHERE id=?;", paramsx![id])
                             .await
                             .ok();
                     }
@@ -1169,7 +1177,7 @@ mod tests {
                 "INSERT INTO jobs
                    (added_timestamp, thread, action, foreign_id, param, desired_timestamp)
                  VALUES (?, ?, ?, ?, ?, ?);",
-                paramsv![
+                paramsx![
                     now,
                     Thread::from(Action::MoveMsg),
                     Action::MoveMsg,

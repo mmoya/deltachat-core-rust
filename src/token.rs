@@ -11,7 +11,9 @@ use crate::context::Context;
 use crate::dc_tools::*;
 
 /// Token namespace
-#[derive(Debug, Display, Clone, Copy, PartialEq, Eq, FromPrimitive, ToPrimitive, ToSql, FromSql)]
+#[derive(
+    Debug, Display, Clone, Copy, PartialEq, Eq, FromPrimitive, ToPrimitive, ToSql, FromSql, Sqlx,
+)]
 #[repr(i32)]
 pub enum Namespace {
     Unknown = 0,
@@ -34,7 +36,7 @@ pub async fn save(context: &Context, namespace: Namespace, foreign_id: ChatId) -
         .sql
         .execute(
             "INSERT INTO tokens (namespc, foreign_id, token, timestamp) VALUES (?, ?, ?, ?);",
-            paramsv![namespace, foreign_id, token, time()],
+            paramsx![namespace, foreign_id, &token, time()],
         )
         .await
         .ok();

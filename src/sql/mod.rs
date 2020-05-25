@@ -26,6 +26,170 @@ macro_rules! paramsv {
     };
 }
 
+#[macro_export]
+macro_rules! paramsx {
+    () => {
+        sqlx::sqlite::SqliteArguments::default()
+    };
+    ($p0:expr) => {{
+        use sqlx::arguments::Arguments;
+
+        let mut args = sqlx::sqlite::SqliteArguments::default();
+        args.add($p0);
+        args
+    }};
+    ($p0:expr, $p1:expr) => {{
+        use sqlx::arguments::Arguments;
+        let mut args = sqlx::sqlite::SqliteArguments::default();
+        args.add($p0);
+        args.add($p1);
+        args
+    }};
+    ($p0:expr, $p1:expr, $p2:expr) => {{
+        use sqlx::arguments::Arguments;
+        let mut args = sqlx::sqlite::SqliteArguments::default();
+        args.add($p0);
+        args.add($p1);
+        args.add($p2);
+        args
+    }};
+    ($p0:expr, $p1:expr, $p2:expr, $p3:expr) => {{
+        use sqlx::arguments::Arguments;
+        let mut args = sqlx::sqlite::SqliteArguments::default();
+        args.add($p0);
+        args.add($p1);
+        args.add($p2);
+        args.add($p3);
+        args
+    }};
+    ($p0:expr, $p1:expr, $p2:expr, $p3:expr, $p4:expr) => {{
+        use sqlx::arguments::Arguments;
+        let mut args = sqlx::sqlite::SqliteArguments::default();
+        args.add($p0);
+        args.add($p1);
+        args.add($p2);
+        args.add($p3);
+        args.add($p4);
+        args
+    }};
+    ($p0:expr, $p1:expr, $p2:expr, $p3:expr, $p4:expr, $p5:expr) => {{
+        use sqlx::arguments::Arguments;
+        let mut args = sqlx::sqlite::SqliteArguments::default();
+        args.add($p0);
+        args.add($p1);
+        args.add($p2);
+        args.add($p3);
+        args.add($p4);
+        args.add($p5);
+        args
+    }};
+    ($p0:expr, $p1:expr, $p2:expr, $p3:expr, $p4:expr, $p5:expr, $p6:expr) => {{
+        use sqlx::arguments::Arguments;
+        let mut args = sqlx::sqlite::SqliteArguments::default();
+        args.add($p0);
+        args.add($p1);
+        args.add($p2);
+        args.add($p3);
+        args.add($p4);
+        args.add($p5);
+        args.add($p6);
+        args
+    }};
+    ($p0:expr, $p1:expr, $p2:expr, $p3:expr, $p4:expr, $p5:expr, $p6:expr, $p7:expr) => {{
+        use sqlx::arguments::Arguments;
+        let mut args = sqlx::sqlite::SqliteArguments::default();
+        args.add($p0);
+        args.add($p1);
+        args.add($p2);
+        args.add($p3);
+        args.add($p4);
+        args.add($p5);
+        args.add($p6);
+        args.add($p7);
+        args
+    }};
+    ($p0:expr, $p1:expr, $p2:expr, $p3:expr, $p4:expr, $p5:expr, $p6:expr, $p7:expr, $p8:expr) => {{
+        use sqlx::arguments::Arguments;
+        let mut args = sqlx::sqlite::SqliteArguments::default();
+        args.add($p0);
+        args.add($p1);
+        args.add($p2);
+        args.add($p3);
+        args.add($p4);
+        args.add($p5);
+        args.add($p6);
+        args.add($p7);
+        args.add($p8);
+        args
+    }};
+    ($p0:expr, $p1:expr, $p2:expr, $p3:expr, $p4:expr, $p5:expr, $p6:expr, $p7:expr, $p8:expr, $p9:expr) => {{
+        use sqlx::arguments::Arguments;
+        let mut args = sqlx::sqlite::SqliteArguments::default();
+        args.add($p0);
+        args.add($p1);
+        args.add($p2);
+        args.add($p3);
+        args.add($p4);
+        args.add($p5);
+        args.add($p6);
+        args.add($p7);
+        args.add($p8);
+        args.add($p9);
+        args
+    }};
+    ($p0:expr, $p1:expr, $p2:expr, $p3:expr, $p4:expr, $p5:expr, $p6:expr, $p7:expr, $p8:expr, $p9:expr, $p10:expr) => {{
+        use sqlx::arguments::Arguments;
+        let mut args = sqlx::sqlite::SqliteArguments::default();
+        args.add($p0);
+        args.add($p1);
+        args.add($p2);
+        args.add($p3);
+        args.add($p4);
+        args.add($p5);
+        args.add($p6);
+        args.add($p7);
+        args.add($p8);
+        args.add($p9);
+        args.add($p10);
+        args
+    }};
+    ($p0:expr, $p1:expr, $p2:expr, $p3:expr, $p4:expr, $p5:expr, $p6:expr, $p7:expr, $p8:expr, $p9:expr, $p10:expr, $p11:expr) => {{
+        use sqlx::arguments::Arguments;
+        let mut args = sqlx::sqlite::SqliteArguments::default();
+        args.add($p0);
+        args.add($p1);
+        args.add($p2);
+        args.add($p3);
+        args.add($p4);
+        args.add($p5);
+        args.add($p6);
+        args.add($p7);
+        args.add($p8);
+        args.add($p9);
+        args.add($p10);
+        args.add($p11);
+        args
+    }};
+    ($p0:expr, $p1:expr, $p2:expr, $p3:expr, $p4:expr, $p5:expr, $p6:expr, $p7:expr, $p8:expr, $p9:expr, $p10:expr, $p11:expr, $p12:expr) => {{
+        use sqlx::arguments::Arguments;
+        let mut args = sqlx::sqlite::SqliteArguments::default();
+        args.add($p0);
+        args.add($p1);
+        args.add($p2);
+        args.add($p3);
+        args.add($p4);
+        args.add($p5);
+        args.add($p6);
+        args.add($p7);
+        args.add($p8);
+        args.add($p9);
+        args.add($p10);
+        args.add($p11);
+        args.add($p12);
+        args
+    }};
+}
+
 mod migrations;
 
 #[derive(Debug, thiserror::Error)]
@@ -104,35 +268,22 @@ impl Sql {
 
     pub async fn execute<S: AsRef<str>>(
         &self,
-        sql: S,
-        params: Vec<&dyn crate::ToSql>,
-    ) -> Result<usize> {
-        let res = {
-            let conn = self.get_conn().await?;
-            conn.execute(sql.as_ref(), params)
-        };
-
-        res.map_err(Into::into)
-    }
-
-    pub async fn xexecute<S: AsRef<str>>(
-        &self,
         statement: S,
         params: sqlx::sqlite::SqliteArguments,
-    ) -> Result<()> {
+    ) -> Result<usize> {
         let lock = self.xpool.read().await;
         let xpool = lock.as_ref().ok_or_else(|| Error::SqlNoConnection)?;
 
-        sqlx::query(statement.as_ref())
+        let count = sqlx::query(statement.as_ref())
             .bind_all(params)
             .execute(xpool)
             .await?;
 
-        Ok(())
+        Ok(count as usize)
     }
 
     /// Execute a list of statements, without any bindings
-    pub async fn xexecute_batch<S: AsRef<str>>(&self, statement: S) -> Result<()> {
+    pub async fn execute_batch<S: AsRef<str>>(&self, statement: S) -> Result<()> {
         let lock = self.xpool.read().await;
         let xpool = lock.as_ref().ok_or_else(|| Error::SqlNoConnection)?;
 
@@ -141,14 +292,6 @@ impl Sql {
         Ok(())
     }
 
-    pub async fn execute_batch<S: AsRef<str>>(&self, sql: S) -> Result<()> {
-        let res = {
-            let conn = self.get_conn().await?;
-            conn.execute_batch(sql.as_ref())
-        };
-
-        res.map_err(Into::into)
-    }
     /// Prepares and executes the statement and maps a function over the resulting rows.
     /// Then executes the second function over the returned iterator and returns the
     /// result of that function.
@@ -333,18 +476,18 @@ impl Sql {
             if exists {
                 self.execute(
                     "UPDATE config SET value=? WHERE keyname=?;",
-                    paramsv![(*value).to_string(), key.to_string()],
+                    paramsx![value, key],
                 )
                 .await
             } else {
                 self.execute(
                     "INSERT INTO config (keyname, value) VALUES (?, ?);",
-                    paramsv![key.to_string(), (*value).to_string()],
+                    paramsx![key, value],
                 )
                 .await
             }
         } else {
-            self.execute("DELETE FROM config WHERE keyname=?;", paramsv![key])
+            self.execute("DELETE FROM config WHERE keyname=?;", paramsx![key])
                 .await
         };
 
@@ -737,7 +880,7 @@ async fn open(
         // but even if execute() would handle errors more gracefully, we should continue on errors -
         // systems might not be able to handle WAL, in which case the standard-journal is used.
         // that may be not optimal, but better than not working at all :)
-        sql.execute("PRAGMA journal_mode=WAL;", paramsv![])
+        sql.execute("PRAGMA journal_mode=WAL;", paramsx![])
             .await
             .ok();
 
@@ -812,10 +955,12 @@ async fn prune_tombstones(context: &Context) -> Result<()> {
     context
         .sql
         .execute(
-            "DELETE FROM msgs \
-         WHERE (chat_id = ? OR hidden) \
-         AND server_uid = 0",
-            paramsv![DC_CHAT_ID_TRASH],
+            r#"
+DELETE FROM msgs
+  WHERE (chat_id = ? OR hidden)
+  AND server_uid = 0
+"#,
+            paramsx![DC_CHAT_ID_TRASH as i32],
         )
         .await?;
     Ok(())

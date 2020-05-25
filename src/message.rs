@@ -1,7 +1,7 @@
 //! # Messages and their identifiers
 
 use async_std::path::{Path, PathBuf};
-use deltachat_derive::{FromSql, ToSql};
+use deltachat_derive::{FromSql, Sqlx, ToSql};
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 
@@ -33,7 +33,20 @@ const SUMMARY_CHARACTERS: usize = 160;
 /// This type can represent both the special as well as normal
 /// messages.
 #[derive(
-    Debug, Copy, Clone, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
+    Debug,
+    Copy,
+    Clone,
+    Default,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    ToPrimitive,
+    FromPrimitive,
+    Sqlx,
 )]
 pub struct MsgId(u32);
 
@@ -92,7 +105,7 @@ impl MsgId {
             .sql
             .execute(
                 "UPDATE msgs SET chat_id=?, txt='', txt_raw='' WHERE id=?",
-                paramsv![chat_id, self],
+                paramsx![chat_id, self],
             )
             .await?;
 
@@ -105,11 +118,11 @@ impl MsgId {
         // sure they are not left while the message is deleted.
         context
             .sql
-            .execute("DELETE FROM msgs_mdns WHERE msg_id=?;", paramsv![self])
+            .execute("DELETE FROM msgs_mdns WHERE msg_id=?;", paramsx![self])
             .await?;
         context
             .sql
-            .execute("DELETE FROM msgs WHERE id=?;", paramsv![self])
+            .execute("DELETE FROM msgs WHERE id=?;", paramsx![self])
             .await?;
         Ok(())
     }
@@ -123,10 +136,12 @@ impl MsgId {
         context
             .sql
             .execute(
-                "UPDATE msgs \
-             SET server_folder='', server_uid=0 \
-             WHERE id=?",
-                paramsv![self],
+                r#"
+UPDATE msgs
+  SET server_folder='', server_uid=0
+  WHERE id=?
+"#,
+                paramsx![self],
             )
             .await?;
         Ok(())
@@ -651,7 +666,7 @@ impl Message {
             .sql
             .execute(
                 "UPDATE msgs SET param=? WHERE id=?;",
-                paramsv![self.param.to_string(), self.id],
+                paramsx![self.param.to_string(), self.id],
             )
             .await
             .is_ok()
@@ -670,6 +685,7 @@ impl Message {
     FromSql,
     Serialize,
     Deserialize,
+    sqlx::Type,
 )]
 #[repr(i32)]
 pub enum MessageState {
@@ -1045,7 +1061,7 @@ async fn delete_poi_location(context: &Context, location_id: u32) -> bool {
         .sql
         .execute(
             "DELETE FROM locations WHERE independent = 1 AND id=?;",
-            paramsv![location_id as i32],
+            paramsx![location_id as i32],
         )
         .await
         .is_ok()
@@ -1124,7 +1140,7 @@ pub async fn update_msg_state(context: &Context, msg_id: MsgId, state: MessageSt
         .sql
         .execute(
             "UPDATE msgs SET state=? WHERE id=?;",
-            paramsv![state, msg_id],
+            paramsx![state, msg_id],
         )
         .await
         .is_ok()
@@ -1263,7 +1279,7 @@ pub async fn set_msg_failed(context: &Context, msg_id: MsgId, error: Option<impl
             .sql
             .execute(
                 "UPDATE msgs SET state=?, param=? WHERE id=?;",
-                paramsv![msg.state, msg.param.to_string(), msg_id],
+                paramsx![msg.state, msg.param.to_string(), msg_id],
             )
             .await
             .is_ok()
@@ -1334,7 +1350,7 @@ pub async fn mdn_from_ext(
             if !mdn_already_in_table {
                 context.sql.execute(
                     "INSERT INTO msgs_mdns (msg_id, contact_id, timestamp_sent) VALUES (?, ?, ?);",
-                    paramsv![msg_id, from_id as i32, timestamp_sent],
+                    paramsx![msg_id, from_id as i32, timestamp_sent],
                 )
                     .await
                            .unwrap_or_default(); // TODO: better error handling
@@ -1532,9 +1548,8 @@ pub async fn update_server_uid(
     match context
         .sql
         .execute(
-            "UPDATE msgs SET server_folder=?, server_uid=? \
-             WHERE rfc724_mid=?",
-            paramsv![server_folder.as_ref(), server_uid, rfc724_mid],
+            "UPDATE msgs SET server_folder=?, server_uid=? WHERE rfc724_mid=?",
+            paramsx![server_folder.as_ref(), server_uid as i32, rfc724_mid],
         )
         .await
     {

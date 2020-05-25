@@ -498,9 +498,9 @@ async fn import_backup(context: &Context, backup_to_import: impl AsRef<Path>) ->
         // only delete backup_blobs if all files were successfully extracted
         context
             .sql
-            .execute("DROP TABLE backup_blobs;", paramsv![])
+            .execute("DROP TABLE backup_blobs;", paramsx![])
             .await?;
-        context.sql.execute("VACUUM;", paramsv![]).await.ok();
+        context.sql.execute("VACUUM;", paramsx![]).await.ok();
         Ok(())
     } else {
         bail!("received stop signal");
@@ -522,7 +522,7 @@ async fn export_backup(context: &Context, dir: impl AsRef<Path>) -> Result<()> {
 
     sql::housekeeping(context).await;
 
-    context.sql.execute("VACUUM;", paramsv![]).await.ok();
+    context.sql.execute("VACUUM;", paramsx![]).await.ok();
 
     // we close the database during the copy of the dbfile
     context.sql.close().await;
@@ -573,7 +573,7 @@ async fn add_files_to_export(context: &Context, sql: &Sql) -> Result<()> {
     if !sql.table_exists("backup_blobs").await? {
         sql.execute(
             "CREATE TABLE backup_blobs (id INTEGER PRIMARY KEY, file_name, file_content);",
-            paramsv![],
+            paramsx![],
         )
         .await?;
     }

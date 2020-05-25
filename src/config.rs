@@ -181,7 +181,7 @@ impl Context {
         match key {
             Config::Selfavatar => {
                 self.sql
-                    .execute("UPDATE contacts SET selfavatar_sent=0;", paramsv![])
+                    .execute("UPDATE contacts SET selfavatar_sent=0;", paramsx![])
                     .await?;
                 self.sql
                     .set_raw_config_bool(self, "attach_selfavatar", true)

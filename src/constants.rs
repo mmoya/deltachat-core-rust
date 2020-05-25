@@ -29,6 +29,7 @@ const DC_MVBOX_MOVE_DEFAULT: i32 = 1;
     ToSql,
     Serialize,
     Deserialize,
+    Sqlx,
 )]
 #[repr(u8)]
 pub enum Blocked {
@@ -43,7 +44,9 @@ impl Default for Blocked {
     }
 }
 
-#[derive(Debug, Display, Clone, Copy, PartialEq, Eq, FromPrimitive, ToPrimitive, FromSql, ToSql)]
+#[derive(
+    Debug, Display, Clone, Copy, PartialEq, Eq, FromPrimitive, ToPrimitive, FromSql, ToSql, Sqlx,
+)]
 #[repr(u8)]
 pub enum ShowEmails {
     Off = 0,
@@ -57,7 +60,9 @@ impl Default for ShowEmails {
     }
 }
 
-#[derive(Debug, Display, Clone, Copy, PartialEq, Eq, FromPrimitive, ToPrimitive, FromSql, ToSql)]
+#[derive(
+    Debug, Display, Clone, Copy, PartialEq, Eq, FromPrimitive, ToPrimitive, FromSql, ToSql, Sqlx,
+)]
 #[repr(u8)]
 pub enum MediaQuality {
     Balanced = 0,
@@ -70,7 +75,9 @@ impl Default for MediaQuality {
     }
 }
 
-#[derive(Debug, Display, Clone, Copy, PartialEq, Eq, FromPrimitive, ToPrimitive, FromSql, ToSql)]
+#[derive(
+    Debug, Display, Clone, Copy, PartialEq, Eq, FromPrimitive, ToPrimitive, FromSql, ToSql, Sqlx,
+)]
 #[repr(u8)]
 pub enum KeyGenType {
     Default = 0,
@@ -132,6 +139,7 @@ pub const DC_CHAT_ID_LAST_SPECIAL: u32 = 9;
     IntoStaticStr,
     Serialize,
     Deserialize,
+    Sqlx,
 )]
 #[repr(u32)]
 pub enum Chattype {
@@ -243,6 +251,7 @@ pub const DC_FOLDERS_CONFIGURED_VERSION: i32 = 3;
     ToSql,
     Serialize,
     Deserialize,
+    sqlx::Type,
 )]
 #[repr(i32)]
 pub enum Viewtype {

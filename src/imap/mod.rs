@@ -1292,7 +1292,7 @@ impl Imap {
             .sql
             .execute(
                 "UPDATE msgs SET server_folder='',server_uid=0 WHERE server_folder=?",
-                paramsv![folder],
+                paramsx![folder],
             )
             .await
         {

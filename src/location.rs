@@ -197,14 +197,16 @@ pub async fn send_locations_to_chat(context: &Context, chat_id: ChatId, seconds:
         if context
             .sql
             .execute(
-                "UPDATE chats    \
-             SET locations_send_begin=?,        \
-             locations_send_until=?  \
-             WHERE id=?",
-                paramsv![
+                r#"
+UPDATE chats
+  SET locations_send_begin=?,
+      locations_send_until=?
+  WHERE id=?
+"#,
+                paramsx![
                     if 0 != seconds { now } else { 0 },
                     if 0 != seconds { now + seconds } else { 0 },
-                    chat_id,
+                    chat_id
                 ],
             )
             .await
@@ -286,13 +288,13 @@ pub async fn set(context: &Context, latitude: f64, longitude: f64, accuracy: f64
             if let Err(err) = context.sql.execute(
                     "INSERT INTO locations  \
                      (latitude, longitude, accuracy, timestamp, chat_id, from_id) VALUES (?,?,?,?,?,?);",
-                    paramsv![
+                    paramsx![
                         latitude,
                         longitude,
                         accuracy,
                         time(),
                         chat_id,
-                        DC_CONTACT_ID_SELF,
+                        DC_CONTACT_ID_SELF as i32
                     ]
             ).await {
                 warn!(context, "failed to store location {:?}", err);
@@ -379,7 +381,7 @@ fn is_marker(txt: &str) -> bool {
 pub async fn delete_all(context: &Context) -> Result<(), Error> {
     context
         .sql
-        .execute("DELETE FROM locations;", paramsv![])
+        .execute("DELETE FROM locations;", paramsx![])
         .await?;
     context.emit_event(Event::LocationChanged(None));
     Ok(())
@@ -488,7 +490,7 @@ pub async fn set_kml_sent_timestamp(
         .sql
         .execute(
             "UPDATE chats SET locations_last_sent=? WHERE id=?;",
-            paramsv![timestamp, chat_id],
+            paramsx![timestamp, chat_id],
         )
         .await?;
     Ok(())
@@ -503,7 +505,7 @@ pub async fn set_msg_location_id(
         .sql
         .execute(
             "UPDATE msgs SET location_id=? WHERE id=?;",
-            paramsv![location_id, msg_id],
+            paramsx![location_id as i32, msg_id],
         )
         .await?;
 
@@ -551,7 +553,7 @@ pub async fn save(
                         latitude,
                         longitude,
                         accuracy,
-                        independent,
+                        independent
                     ])?;
 
                     if timestamp > newest_timestamp {
@@ -705,8 +707,8 @@ pub(crate) async fn job_maybe_send_locations_ended(
         if !(send_begin == 0 && send_until == 0) {
             // not streaming, device-message already sent
             job_try!(context.sql.execute(
-                "UPDATE chats    SET locations_send_begin=0, locations_send_until=0  WHERE id=?",
-                paramsv![chat_id],
+                "UPDATE chats SET locations_send_begin=0, locations_send_until=0  WHERE id=?",
+                paramsx![chat_id],
             ).await);
 
             let stock_str = context
