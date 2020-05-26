@@ -830,15 +830,14 @@ async fn calc_timestamps(
     }
     *sort_timestamp = message_timestamp;
     if is_fresh_msg {
-        let last_msg_time: Option<i64> = context
+        let last_msg_time: Result<i64, _> = context
             .sql
-            .query_get_value(
-                context,
+            .query_value(
                 "SELECT MAX(timestamp) FROM msgs WHERE chat_id=? and from_id!=? AND timestamp>=?",
-                paramsv![chat_id, from_id as i32, *sort_timestamp],
+                paramsx![chat_id, from_id as i32, *sort_timestamp],
             )
             .await;
-        if let Some(last_msg_time) = last_msg_time {
+        if let Ok(last_msg_time) = last_msg_time {
             if last_msg_time > 0 && *sort_timestamp <= last_msg_time {
                 *sort_timestamp = last_msg_time + 1;
             }
@@ -1235,7 +1234,7 @@ async fn create_or_lookup_adhoc_group(
     let chat_ids = search_chat_ids_by_contact_ids(context, &member_ids).await?;
     if !chat_ids.is_empty() {
         let chat_ids_str = join(chat_ids.iter().map(|x| x.to_string()), ",");
-        let res = context
+        let res: Result<(ChatId, Option<Blocked>), _> = context
             .sql
             .query_row(
                 format!(
@@ -1250,19 +1249,13 @@ async fn create_or_lookup_adhoc_group(
                   LIMIT 1;",
                     chat_ids_str
                 ),
-                paramsv![],
-                |row| {
-                    Ok((
-                        row.get::<_, ChatId>(0)?,
-                        row.get::<_, Option<Blocked>>(1)?.unwrap_or_default(),
-                    ))
-                },
+                paramsx![],
             )
             .await;
 
         if let Ok((id, id_blocked)) = res {
             /* success, chat found */
-            return Ok((id, id_blocked));
+            return Ok((id, id_blocked.unwrap_or_default()));
         }
     }
 

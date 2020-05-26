@@ -140,6 +140,20 @@ impl Default for Origin {
         Origin::Unknown
     }
 }
+impl<'a> sqlx::FromRow<'a, sqlx::sqlite::SqliteRow<'_>> for Contact {
+    fn from_row(row: &sqlx::sqlite::SqliteRow<'_>) -> Result<Self, sqlx::Error> {
+        let contact = Self {
+            id: row.get(0),
+            name: row.get::<String, _>(1)?,
+            authname: row.get::<String, _>(5)?,
+            addr: row.get::<String, _>(2)?,
+            blocked: row.get::<Option<i32>, _>(4)?.unwrap_or_default() != 0,
+            origin: row.get(3)?,
+            param: row.get::<String, _>(6)?.parse().unwrap_or_default(),
+        };
+        Ok(contact)
+    }
+}
 
 impl Origin {
     /// Contacts that are known, i. e. they came in via accepted contacts or
@@ -170,25 +184,15 @@ pub enum VerifiedStatus {
 
 impl Contact {
     pub async fn load_from_db(context: &Context, contact_id: u32) -> crate::sql::Result<Self> {
-        let mut res = context
+        let mut res: Contact = context
             .sql
             .query_row(
-                "SELECT c.name, c.addr, c.origin, c.blocked, c.authname, c.param
-               FROM contacts c
-              WHERE c.id=?;",
-                paramsv![contact_id as i32],
-                |row| {
-                    let contact = Self {
-                        id: contact_id,
-                        name: row.get::<_, String>(0)?,
-                        authname: row.get::<_, String>(4)?,
-                        addr: row.get::<_, String>(1)?,
-                        blocked: row.get::<_, Option<i32>>(3)?.unwrap_or_default() != 0,
-                        origin: row.get(2)?,
-                        param: row.get::<_, String>(5)?.parse().unwrap_or_default(),
-                    };
-                    Ok(contact)
-                },
+                r#"
+SELECT c.id, c.name, c.addr, c.origin, c.blocked, c.authname, c.param
+  FROM contacts c
+  WHERE c.id=?;
+"#,
+                paramsx![contact_id as i32],
             )
             .await?;
         if contact_id == DC_CONTACT_ID_SELF {
@@ -313,15 +317,15 @@ WHERE from_id=? AND state=?;
         if addr_cmp(addr_normalized, addr_self) {
             return DC_CONTACT_ID_SELF;
         }
-        context.sql.query_get_value(
-            context,
+        let v: i32 = context.sql.query_value(
             "SELECT id FROM contacts WHERE addr=?1 COLLATE NOCASE AND id>?2 AND origin>=?3 AND blocked=0;",
-            paramsv![
+            paramsx![
                 addr_normalized,
                 DC_CONTACT_ID_LAST_SPECIAL as i32,
-                min_origin as u32,
+                min_origin as i32
             ],
-        ).await.unwrap_or_default()
+        ).await.unwrap_or_default();
+        v as u32
     }
 
     /// Lookup a contact and create it if it does not exist yet.
@@ -392,39 +396,32 @@ WHERE from_id=? AND state=?;
         let mut update_authname = false;
         let mut row_id = 0;
 
-        if let Ok((id, row_name, row_addr, row_origin, row_authname)) = context.sql.query_row(
+        let res: Result<(i32, String, String, Origin, String), _> = context.sql.query_row(
             "SELECT id, name, addr, origin, authname FROM contacts WHERE addr=? COLLATE NOCASE;",
-            paramsv![addr.to_string()],
-            |row| {
-                let row_id = row.get(0)?;
-                let row_name: String = row.get(1)?;
-                let row_addr: String = row.get(2)?;
-                let row_origin: Origin = row.get(3)?;
-                let row_authname: String = row.get(4)?;
+            paramsx![addr.to_string()],
+        )
+        .await;
 
-                if !name.as_ref().is_empty() {
-                    if !row_name.is_empty() {
-                        if (origin >= row_origin || row_name == row_authname)
-                            && name.as_ref() != row_name
-                        {
-                            update_name = true;
-                        }
-                    } else {
+        if let Ok((id, row_name, row_addr, row_origin, row_authname)) = res {
+            if !name.as_ref().is_empty() {
+                if !row_name.is_empty() {
+                    if (origin >= row_origin || row_name == row_authname)
+                        && name.as_ref() != row_name
+                    {
                         update_name = true;
                     }
-                    if origin == Origin::IncomingUnknownFrom && name.as_ref() != row_authname {
-                        update_authname = true;
-                    }
-                } else if origin == Origin::ManuallyCreated && !row_authname.is_empty() {
-                    // no name given on manual edit, this will update the name to the authname
+                } else {
                     update_name = true;
                 }
+                if origin == Origin::IncomingUnknownFrom && name.as_ref() != row_authname {
+                    update_authname = true;
+                }
+            } else if origin == Origin::ManuallyCreated && !row_authname.is_empty() {
+                // no name given on manual edit, this will update the name to the authname
+                update_name = true;
+            }
 
-                Ok((row_id, row_name, row_addr, row_origin, row_authname))
-            },
-        )
-        .await {
-            row_id = id;
+            row_id = id as u32;
             if origin as i32 >= row_origin as i32 && addr != row_addr {
                 update_addr = true;
             }
@@ -445,7 +442,11 @@ WHERE from_id=? AND state=?;
                         "UPDATE contacts SET name=?, addr=?, origin=?, authname=? WHERE id=?;",
                         paramsx![
                             &new_name,
-                            if update_addr { addr.to_string() } else { row_addr },
+                            if update_addr {
+                                addr.to_string()
+                            } else {
+                                row_addr
+                            },
                             if origin > row_origin {
                                 origin
                             } else {
@@ -650,15 +651,15 @@ WHERE from_id=? AND state=?;
     }
 
     pub async fn get_blocked_cnt(context: &Context) -> usize {
-        context
+        let v: i32 = context
             .sql
-            .query_get_value::<isize>(
-                context,
+            .query_value(
                 "SELECT COUNT(*) FROM contacts WHERE id>? AND blocked!=0",
-                paramsv![DC_CONTACT_ID_LAST_SPECIAL as i32],
+                paramsx![DC_CONTACT_ID_LAST_SPECIAL as i32],
             )
             .await
-            .unwrap_or_default() as usize
+            .unwrap_or_default();
+        v as usize
     }
 
     /// Get blocked contacts.
@@ -759,10 +760,9 @@ WHERE from_id=? AND state=?;
 
         let count_contacts: i32 = context
             .sql
-            .query_get_value(
-                context,
+            .query_value(
                 "SELECT COUNT(*) FROM chats_contacts WHERE contact_id=?;",
-                paramsv![contact_id as i32],
+                paramsx![contact_id as i32],
             )
             .await
             .unwrap_or_default();
@@ -770,10 +770,9 @@ WHERE from_id=? AND state=?;
         let count_msgs: i32 = if count_contacts > 0 {
             context
                 .sql
-                .query_get_value(
-                    context,
+                .query_value(
                     "SELECT COUNT(*) FROM msgs WHERE from_id=? OR to_id=?;",
-                    paramsv![contact_id as i32, contact_id as i32],
+                    paramsx![contact_id as i32, contact_id as i32],
                 )
                 .await
                 .unwrap_or_default()
@@ -982,15 +981,15 @@ WHERE from_id=? AND state=?;
             return 0;
         }
 
-        context
+        let v: i32 = context
             .sql
-            .query_get_value::<isize>(
-                context,
+            .query_value(
                 "SELECT COUNT(*) FROM contacts WHERE id>?;",
-                paramsv![DC_CONTACT_ID_LAST_SPECIAL as i32],
+                paramsx![DC_CONTACT_ID_LAST_SPECIAL as i32],
             )
             .await
-            .unwrap_or_default() as usize
+            .unwrap_or_default();
+        v as usize
     }
 
     pub async fn real_exists_by_id(context: &Context, contact_id: u32) -> bool {

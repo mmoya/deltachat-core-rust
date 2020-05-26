@@ -443,11 +443,12 @@ async fn import_backup(context: &Context, backup_to_import: impl AsRef<Path>) ->
 
     delete_and_reset_all_device_msgs(&context).await?;
 
-    let total_files_cnt = context
+    let total_files_cnt: i32 = context
         .sql
-        .query_get_value::<isize>(context, "SELECT COUNT(*) FROM backup_blobs;", paramsv![])
+        .query_value("SELECT COUNT(*) FROM backup_blobs;", paramsx![])
         .await
-        .unwrap_or_default() as usize;
+        .unwrap_or_default();
+    let total_files_cnt = total_files_cnt as usize;
     info!(
         context,
         "***IMPORT-in-progress: total_files_cnt={:?}", total_files_cnt,

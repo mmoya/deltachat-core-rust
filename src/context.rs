@@ -266,22 +266,24 @@ impl Context {
             .unwrap_or_default();
         let journal_mode = self
             .sql
-            .query_get_value(self, "PRAGMA journal_mode;", paramsv![])
+            .query_value("PRAGMA journal_mode;", paramsx![])
             .await
-            .unwrap_or_else(|| "unknown".to_string());
+            .unwrap_or_else(|_| "unknown".to_string());
         let e2ee_enabled = self.get_config_int(Config::E2eeEnabled).await;
         let mdns_enabled = self.get_config_int(Config::MdnsEnabled).await;
         let bcc_self = self.get_config_int(Config::BccSelf).await;
 
-        let prv_key_cnt: Option<isize> = self
+        let prv_key_cnt = self
             .sql
-            .query_get_value(self, "SELECT COUNT(*) FROM keypairs;", paramsv![])
-            .await;
+            .query_value("SELECT COUNT(*) FROM keypairs;", paramsx![])
+            .await
+            .ok();
 
-        let pub_key_cnt: Option<isize> = self
+        let pub_key_cnt = self
             .sql
-            .query_get_value(self, "SELECT COUNT(*) FROM acpeerstates;", paramsv![])
-            .await;
+            .query_value("SELECT COUNT(*) FROM acpeerstates;", paramsx![])
+            .await
+            .ok();
         let fingerprint_str = match SignedPublicKey::load_self(self).await {
             Ok(key) => Key::from(key).fingerprint(),
             Err(err) => format!("<key failure: {}>", err),

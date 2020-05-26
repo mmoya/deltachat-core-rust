@@ -8,6 +8,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use rusqlite::{Connection, Error as SqlError, OpenFlags};
+use sqlx::Cursor;
 
 use crate::chat::{update_device_icon, update_saved_messages_icon};
 use crate::constants::DC_CHAT_ID_TRASH;
@@ -16,181 +17,11 @@ use crate::dc_tools::*;
 use crate::param::*;
 use crate::peerstate::*;
 
-#[macro_export]
-macro_rules! paramsv {
-    () => {
-        Vec::new()
-    };
-    ($($param:expr),+ $(,)?) => {
-        vec![$(&$param as &dyn $crate::ToSql),+]
-    };
-}
-
-#[macro_export]
-macro_rules! paramsx {
-    () => {
-        sqlx::sqlite::SqliteArguments::default()
-    };
-    ($p0:expr) => {{
-        use sqlx::arguments::Arguments;
-
-        let mut args = sqlx::sqlite::SqliteArguments::default();
-        args.add($p0);
-        args
-    }};
-    ($p0:expr, $p1:expr) => {{
-        use sqlx::arguments::Arguments;
-        let mut args = sqlx::sqlite::SqliteArguments::default();
-        args.add($p0);
-        args.add($p1);
-        args
-    }};
-    ($p0:expr, $p1:expr, $p2:expr) => {{
-        use sqlx::arguments::Arguments;
-        let mut args = sqlx::sqlite::SqliteArguments::default();
-        args.add($p0);
-        args.add($p1);
-        args.add($p2);
-        args
-    }};
-    ($p0:expr, $p1:expr, $p2:expr, $p3:expr) => {{
-        use sqlx::arguments::Arguments;
-        let mut args = sqlx::sqlite::SqliteArguments::default();
-        args.add($p0);
-        args.add($p1);
-        args.add($p2);
-        args.add($p3);
-        args
-    }};
-    ($p0:expr, $p1:expr, $p2:expr, $p3:expr, $p4:expr) => {{
-        use sqlx::arguments::Arguments;
-        let mut args = sqlx::sqlite::SqliteArguments::default();
-        args.add($p0);
-        args.add($p1);
-        args.add($p2);
-        args.add($p3);
-        args.add($p4);
-        args
-    }};
-    ($p0:expr, $p1:expr, $p2:expr, $p3:expr, $p4:expr, $p5:expr) => {{
-        use sqlx::arguments::Arguments;
-        let mut args = sqlx::sqlite::SqliteArguments::default();
-        args.add($p0);
-        args.add($p1);
-        args.add($p2);
-        args.add($p3);
-        args.add($p4);
-        args.add($p5);
-        args
-    }};
-    ($p0:expr, $p1:expr, $p2:expr, $p3:expr, $p4:expr, $p5:expr, $p6:expr) => {{
-        use sqlx::arguments::Arguments;
-        let mut args = sqlx::sqlite::SqliteArguments::default();
-        args.add($p0);
-        args.add($p1);
-        args.add($p2);
-        args.add($p3);
-        args.add($p4);
-        args.add($p5);
-        args.add($p6);
-        args
-    }};
-    ($p0:expr, $p1:expr, $p2:expr, $p3:expr, $p4:expr, $p5:expr, $p6:expr, $p7:expr) => {{
-        use sqlx::arguments::Arguments;
-        let mut args = sqlx::sqlite::SqliteArguments::default();
-        args.add($p0);
-        args.add($p1);
-        args.add($p2);
-        args.add($p3);
-        args.add($p4);
-        args.add($p5);
-        args.add($p6);
-        args.add($p7);
-        args
-    }};
-    ($p0:expr, $p1:expr, $p2:expr, $p3:expr, $p4:expr, $p5:expr, $p6:expr, $p7:expr, $p8:expr) => {{
-        use sqlx::arguments::Arguments;
-        let mut args = sqlx::sqlite::SqliteArguments::default();
-        args.add($p0);
-        args.add($p1);
-        args.add($p2);
-        args.add($p3);
-        args.add($p4);
-        args.add($p5);
-        args.add($p6);
-        args.add($p7);
-        args.add($p8);
-        args
-    }};
-    ($p0:expr, $p1:expr, $p2:expr, $p3:expr, $p4:expr, $p5:expr, $p6:expr, $p7:expr, $p8:expr, $p9:expr) => {{
-        use sqlx::arguments::Arguments;
-        let mut args = sqlx::sqlite::SqliteArguments::default();
-        args.add($p0);
-        args.add($p1);
-        args.add($p2);
-        args.add($p3);
-        args.add($p4);
-        args.add($p5);
-        args.add($p6);
-        args.add($p7);
-        args.add($p8);
-        args.add($p9);
-        args
-    }};
-    ($p0:expr, $p1:expr, $p2:expr, $p3:expr, $p4:expr, $p5:expr, $p6:expr, $p7:expr, $p8:expr, $p9:expr, $p10:expr) => {{
-        use sqlx::arguments::Arguments;
-        let mut args = sqlx::sqlite::SqliteArguments::default();
-        args.add($p0);
-        args.add($p1);
-        args.add($p2);
-        args.add($p3);
-        args.add($p4);
-        args.add($p5);
-        args.add($p6);
-        args.add($p7);
-        args.add($p8);
-        args.add($p9);
-        args.add($p10);
-        args
-    }};
-    ($p0:expr, $p1:expr, $p2:expr, $p3:expr, $p4:expr, $p5:expr, $p6:expr, $p7:expr, $p8:expr, $p9:expr, $p10:expr, $p11:expr) => {{
-        use sqlx::arguments::Arguments;
-        let mut args = sqlx::sqlite::SqliteArguments::default();
-        args.add($p0);
-        args.add($p1);
-        args.add($p2);
-        args.add($p3);
-        args.add($p4);
-        args.add($p5);
-        args.add($p6);
-        args.add($p7);
-        args.add($p8);
-        args.add($p9);
-        args.add($p10);
-        args.add($p11);
-        args
-    }};
-    ($p0:expr, $p1:expr, $p2:expr, $p3:expr, $p4:expr, $p5:expr, $p6:expr, $p7:expr, $p8:expr, $p9:expr, $p10:expr, $p11:expr, $p12:expr) => {{
-        use sqlx::arguments::Arguments;
-        let mut args = sqlx::sqlite::SqliteArguments::default();
-        args.add($p0);
-        args.add($p1);
-        args.add($p2);
-        args.add($p3);
-        args.add($p4);
-        args.add($p5);
-        args.add($p6);
-        args.add($p7);
-        args.add($p8);
-        args.add($p9);
-        args.add($p10);
-        args.add($p11);
-        args.add($p12);
-        args
-    }};
-}
-
+#[macro_use]
+mod macros;
 mod migrations;
+
+pub use macros::*;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -292,6 +123,11 @@ impl Sql {
         Ok(())
     }
 
+    pub async fn get_pool(&self) -> Result<sqlx::sqlite::SqlitePool> {
+        let lock = self.xpool.read().await;
+        lock.as_ref().cloned().ok_or_else(|| Error::SqlNoConnection)
+    }
+
     /// Prepares and executes the statement and maps a function over the resulting rows.
     /// Then executes the second function over the returned iterator and returns the
     /// result of that function.
@@ -363,22 +199,73 @@ impl Sql {
     }
 
     /// Execute a query which is expected to return one row.
-    pub async fn query_row<T, F>(
+    pub async fn query_row<T>(
         &self,
-        sql: impl AsRef<str>,
-        params: Vec<&dyn crate::ToSql>,
-        f: F,
+        statement: impl AsRef<str>,
+        params: sqlx::sqlite::SqliteArguments,
     ) -> Result<T>
     where
-        F: FnOnce(&rusqlite::Row) -> rusqlite::Result<T>,
+        T: for<'a> sqlx::row::FromRow<'a, sqlx::sqlite::SqliteRow<'a>>,
     {
-        let sql = sql.as_ref();
-        let res = {
-            let conn = self.get_conn().await?;
-            conn.query_row(sql, params, f)
-        };
+        match self.query_row_optional(statement, params).await? {
+            Some(row) => Ok(row),
+            None => Err(sqlx::Error::RowNotFound.into()),
+        }
+    }
 
-        res.map_err(Into::into)
+    /// Execute a query which is expected to return zero or one row.
+    pub async fn query_row_optional<T>(
+        &self,
+        statement: impl AsRef<str>,
+        params: sqlx::sqlite::SqliteArguments,
+    ) -> Result<Option<T>>
+    where
+        T: for<'a> sqlx::row::FromRow<'a, sqlx::sqlite::SqliteRow<'a>>,
+    {
+        let lock = self.xpool.read().await;
+        let xpool = lock.as_ref().ok_or_else(|| Error::SqlNoConnection)?;
+        let mut rows = sqlx::query(statement.as_ref())
+            .bind_all(params)
+            .fetch(xpool);
+
+        match rows.next().await {
+            Ok(Some(row)) => {
+                let val: T = sqlx::FromRow::from_row(&row)?;
+                Ok(Some(val))
+            }
+            Ok(None) => Ok(None),
+            Err(err) => Err(Error::from(err)),
+        }
+    }
+
+    pub async fn query_value_optional<T>(
+        &self,
+        statement: impl AsRef<str>,
+        params: sqlx::sqlite::SqliteArguments,
+    ) -> Result<Option<T>>
+    where
+        T: for<'a> sqlx::decode::Decode<'a, sqlx::sqlite::Sqlite>,
+        T: sqlx::Type<sqlx::sqlite::Sqlite>,
+        T: 'static,
+    {
+        match self.query_row_optional(statement, params).await? {
+            Some((val,)) => Ok(Some(val)),
+            None => Ok(None),
+        }
+    }
+
+    pub async fn query_value<T>(
+        &self,
+        statement: impl AsRef<str>,
+        params: sqlx::sqlite::SqliteArguments,
+    ) -> Result<T>
+    where
+        T: for<'a> sqlx::decode::Decode<'a, sqlx::sqlite::Sqlite>,
+        T: sqlx::Type<sqlx::sqlite::Sqlite>,
+        T: 'static,
+    {
+        let (val,): (T,) = self.query_row(statement, params).await?;
+        Ok(val)
     }
 
     pub async fn table_exists(&self, name: impl AsRef<str>) -> Result<bool> {
@@ -394,63 +281,6 @@ impl Sql {
             Ok(exists)
         })
         .await
-    }
-
-    /// Execute a query which is expected to return zero or one row.
-    pub async fn query_row_optional<T, F>(
-        &self,
-        sql: impl AsRef<str>,
-        params: Vec<&dyn crate::ToSql>,
-        f: F,
-    ) -> Result<Option<T>>
-    where
-        F: FnOnce(&rusqlite::Row) -> rusqlite::Result<T>,
-    {
-        match self.query_row(sql, params, f).await {
-            Ok(res) => Ok(Some(res)),
-            Err(Error::Sql(rusqlite::Error::QueryReturnedNoRows)) => Ok(None),
-            Err(Error::Sql(rusqlite::Error::InvalidColumnType(
-                _,
-                _,
-                rusqlite::types::Type::Null,
-            ))) => Ok(None),
-            Err(err) => Err(err),
-        }
-    }
-
-    /// Executes a query which is expected to return one row and one
-    /// column. If the query does not return a value or returns SQL
-    /// `NULL`, returns `Ok(None)`.
-    pub async fn query_get_value_result<T>(
-        &self,
-        query: &str,
-        params: Vec<&dyn crate::ToSql>,
-    ) -> Result<Option<T>>
-    where
-        T: rusqlite::types::FromSql,
-    {
-        self.query_row_optional(query, params, |row| row.get::<_, T>(0))
-            .await
-    }
-
-    /// Not resultified version of `query_get_value_result`. Returns
-    /// `None` on error.
-    pub async fn query_get_value<T>(
-        &self,
-        context: &Context,
-        query: &str,
-        params: Vec<&dyn crate::ToSql>,
-    ) -> Option<T>
-    where
-        T: rusqlite::types::FromSql,
-    {
-        match self.query_get_value_result(query, params).await {
-            Ok(res) => res,
-            Err(err) => {
-                warn!(context, "sql: Failed query_row: {}", err);
-                None
-            }
-        }
     }
 
     /// Set private configuration options.
@@ -505,12 +335,13 @@ impl Sql {
         if !self.is_open().await || key.as_ref().is_empty() {
             return None;
         }
-        self.query_get_value(
-            context,
+        self.query_row(
             "SELECT value FROM config WHERE keyname=?;",
-            paramsv![key.as_ref().to_string()],
+            paramsx![key.as_ref().to_string()],
         )
         .await
+        .ok()
+        .map(|(res,)| res)
     }
 
     pub async fn set_raw_config_int(

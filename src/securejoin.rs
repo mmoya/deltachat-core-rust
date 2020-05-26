@@ -1037,21 +1037,14 @@ pub async fn handle_degrade_event(
     //   with things they cannot fix, so the user is just kicked from the verified group
     //   (and he will know this and can fix this)
     if Some(DegradeEvent::FingerprintChanged) == peerstate.degrade_event {
-        let contact_id: i32 = match context
+        let contact_id: i32 = context
             .sql
-            .query_get_value(
-                context,
+            .query_value(
                 "SELECT id FROM contacts WHERE addr=?;",
-                paramsv![peerstate.addr],
+                paramsx![&peerstate.addr],
             )
-            .await
-        {
-            None => bail!(
-                "contact with peerstate.addr {:?} not found",
-                &peerstate.addr
-            ),
-            Some(contact_id) => contact_id,
-        };
+            .await?;
+
         if contact_id > 0 {
             let (contact_chat_id, _) =
                 chat::create_or_lookup_by_contact_id(context, contact_id as u32, Blocked::Deaddrop)

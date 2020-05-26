@@ -281,12 +281,12 @@ UPDATE contacts
     async fn get_draft_msg_id(self, context: &Context) -> Option<MsgId> {
         context
             .sql
-            .query_get_value::<MsgId>(
-                context,
+            .query_value(
                 "SELECT id FROM msgs WHERE chat_id=? AND state=?;",
-                paramsv![self, MessageState::OutDraft],
+                paramsx![self, MessageState::OutDraft],
             )
             .await
+            .ok()
     }
 
     pub async fn get_draft(self, context: &Context) -> Result<Option<Message>, Error> {
@@ -357,37 +357,34 @@ UPDATE contacts
 
     /// Returns number of messages in a chat.
     pub async fn get_msg_cnt(self, context: &Context) -> usize {
-        context
+        let v: i32 = context
             .sql
-            .query_get_value::<i32>(
-                context,
-                "SELECT COUNT(*) FROM msgs WHERE chat_id=?;",
-                paramsv![self],
-            )
+            .query_value("SELECT COUNT(*) FROM msgs WHERE chat_id=?;", paramsx![self])
             .await
-            .unwrap_or_default() as usize
+            .unwrap_or_default();
+        v as usize
     }
 
     pub async fn get_fresh_msg_cnt(self, context: &Context) -> usize {
-        context
+        let v: i32 = context
             .sql
-            .query_get_value::<i32>(
-                context,
+            .query_value(
                 "SELECT COUNT(*)
                 FROM msgs
                 WHERE state=10
                 AND hidden=0
                 AND chat_id=?;",
-                paramsv![self],
+                paramsx![self],
             )
             .await
-            .unwrap_or_default() as usize
+            .unwrap_or_default();
+        v as usize
     }
 
     pub(crate) async fn get_param(self, context: &Context) -> Result<Params, Error> {
         let res: Option<String> = context
             .sql
-            .query_get_value_result("SELECT param FROM chats WHERE id=?", paramsv![self])
+            .query_value_optional("SELECT param FROM chats WHERE id=?", paramsx![self])
             .await?;
         Ok(res
             .map(|s| s.parse().unwrap_or_default())
@@ -404,14 +401,9 @@ UPDATE contacts
         Ok(self.get_param(context).await?.exists(Param::Devicetalk))
     }
 
-    async fn parent_query<T, F>(
-        self,
-        context: &Context,
-        fields: &str,
-        f: F,
-    ) -> sql::Result<Option<T>>
+    async fn parent_query<T>(self, context: &Context, fields: &str) -> sql::Result<Option<T>>
     where
-        F: FnOnce(&rusqlite::Row) -> rusqlite::Result<T>,
+        T: for<'a> sqlx::row::FromRow<'a, sqlx::sqlite::SqliteRow<'a>>,
     {
         let sql = &context.sql;
         let query = format!(
@@ -423,36 +415,29 @@ UPDATE contacts
         );
         sql.query_row_optional(
             query,
-            paramsv![
+            paramsx![
                 self,
                 MessageState::OutPreparing,
                 MessageState::OutDraft,
                 MessageState::OutPending,
                 MessageState::OutFailed
             ],
-            f,
         )
         .await
     }
 
     async fn get_parent_mime_headers(self, context: &Context) -> Option<(String, String, String)> {
-        let collect = |row: &rusqlite::Row| Ok((row.get(0)?, row.get(1)?, row.get(2)?));
-        self.parent_query(
-            context,
-            "rfc724_mid, mime_in_reply_to, mime_references",
-            collect,
-        )
-        .await
-        .ok()
-        .flatten()
+        self.parent_query(context, "rfc724_mid, mime_in_reply_to, mime_references")
+            .await
+            .ok()
+            .flatten()
     }
 
     async fn parent_is_encrypted(self, context: &Context) -> Result<bool, Error> {
-        let collect = |row: &rusqlite::Row| Ok(row.get(0)?);
-        let packed: Option<String> = self.parent_query(context, "param", collect).await?;
+        let packed: Option<(String,)> = self.parent_query(context, "param").await?;
 
         if let Some(ref packed) = packed {
-            let param = packed.parse::<Params>()?;
+            let param = packed.0.parse::<Params>()?;
             Ok(param.exists(Param::GuaranteeE2ee))
         } else {
             // No messages
@@ -556,31 +541,37 @@ pub struct Chat {
     pub mute_duration: MuteDuration,
 }
 
+impl<'a> sqlx::FromRow<'a, sqlx::sqlite::SqliteRow<'_>> for Chat {
+    fn from_row(row: &sqlx::sqlite::SqliteRow<'_>) -> Result<Self, sqlx::Error> {
+        let c = Chat {
+            id: row.get(0)?,
+            typ: row.get(1)?,
+            name: row.get::<String, _>(2)?,
+            grpid: row.get::<String, _>(3)?,
+            param: row.get::<String, _>(4)?.parse().unwrap_or_default(),
+            visibility: row.get(5)?,
+            blocked: row.get::<Option<_>, _>(5)?.unwrap_or_default(),
+            is_sending_locations: row.get(7)?,
+            mute_duration: row.get(8)?,
+        };
+
+        Ok(c)
+    }
+}
+
 impl Chat {
     /// Loads chat from the database by its ID.
     pub async fn load_from_db(context: &Context, chat_id: ChatId) -> Result<Self, Error> {
-        let res = context
+        let res: Result<Chat, _> = context
             .sql
             .query_row(
-                "SELECT c.type, c.name, c.grpid, c.param, c.archived,
-                    c.blocked, c.locations_send_until, c.muted_until
-             FROM chats c
-             WHERE c.id=?;",
-                paramsv![chat_id],
-                |row| {
-                    let c = Chat {
-                        id: chat_id,
-                        typ: row.get(0)?,
-                        name: row.get::<_, String>(1)?,
-                        grpid: row.get::<_, String>(2)?,
-                        param: row.get::<_, String>(3)?.parse().unwrap_or_default(),
-                        visibility: row.get(4)?,
-                        blocked: row.get::<_, Option<_>>(5)?.unwrap_or_default(),
-                        is_sending_locations: row.get(6)?,
-                        mute_duration: row.get(7)?,
-                    };
-                    Ok(c)
-                },
+                r#"
+SELECT c.id, c.type, c.name, c.grpid, c.param, c.archived,
+       c.blocked, c.locations_send_until, c.muted_until
+  FROM chats c
+  WHERE c.id=?;
+"#,
+                paramsx![chat_id],
             )
             .await;
 
@@ -804,12 +795,12 @@ impl Chat {
             if self.typ == Chattype::Single {
                 if let Some(id) = context
                     .sql
-                    .query_get_value(
-                        context,
+                    .query_value(
                         "SELECT contact_id FROM chats_contacts WHERE chat_id=?;",
-                        paramsv![self.id],
+                        paramsx![self.id],
                     )
                     .await
+                    .ok()
                 {
                     to_id = id;
                 } else {
@@ -1316,13 +1307,7 @@ pub(crate) async fn lookup_by_contact_id(
               WHERE c.type=100
                 AND c.id>9
                 AND j.contact_id=?;",
-            paramsv![contact_id as i32],
-            |row| {
-                Ok((
-                    row.get::<_, ChatId>(0)?,
-                    row.get::<_, Option<_>>(1)?.unwrap_or_default(),
-                ))
-            },
+            paramsx![contact_id as i32],
         )
         .await
         .map_err(Into::into)
@@ -2168,10 +2153,9 @@ pub(crate) async fn reset_gossiped_timestamp(
 pub async fn get_gossiped_timestamp(context: &Context, chat_id: ChatId) -> i64 {
     context
         .sql
-        .query_get_value::<i64>(
-            context,
+        .query_value(
             "SELECT gossiped_timestamp FROM chats WHERE id=?;",
-            paramsv![chat_id],
+            paramsx![chat_id],
         )
         .await
         .unwrap_or_default()
@@ -2684,29 +2668,29 @@ pub async fn forward_msgs(
 }
 
 pub(crate) async fn get_chat_contact_cnt(context: &Context, chat_id: ChatId) -> usize {
-    context
+    let v: i32 = context
         .sql
-        .query_get_value::<isize>(
-            context,
+        .query_value(
             "SELECT COUNT(*) FROM chats_contacts WHERE chat_id=?;",
-            paramsv![chat_id],
+            paramsx![chat_id],
         )
         .await
-        .unwrap_or_default() as usize
+        .unwrap_or_default();
+    v as usize
 }
 
 pub(crate) async fn get_chat_cnt(context: &Context) -> usize {
     if context.sql.is_open().await {
         /* no database, no chats - this is no error (needed eg. for information) */
-        context
+        let v: i32 = context
             .sql
-            .query_get_value::<isize>(
-                context,
+            .query_value(
                 "SELECT COUNT(*) FROM chats WHERE id>9 AND blocked=0;",
-                paramsv![],
+                paramsx![],
             )
             .await
-            .unwrap_or_default() as usize
+            .unwrap_or_default();
+        v as usize
     } else {
         0
     }
@@ -2716,20 +2700,15 @@ pub(crate) async fn get_chat_id_by_grpid(
     context: &Context,
     grpid: impl AsRef<str>,
 ) -> Result<(ChatId, bool, Blocked), sql::Error> {
-    context
+    let (chat_id, blocked, typ): (ChatId, Blocked, Chattype) = context
         .sql
         .query_row(
             "SELECT id, blocked, type FROM chats WHERE grpid=?;",
-            paramsv![grpid.as_ref()],
-            |row| {
-                let chat_id = row.get::<_, ChatId>(0)?;
-
-                let b = row.get::<_, Option<Blocked>>(1)?.unwrap_or_default();
-                let v = row.get::<_, Option<Chattype>>(2)?.unwrap_or_default();
-                Ok((chat_id, v == Chattype::VerifiedGroup, b))
-            },
+            paramsx![grpid.as_ref()],
         )
-        .await
+        .await?;
+
+    Ok((chat_id, typ == Chattype::VerifiedGroup, blocked))
 }
 
 /// Adds a message to device chat.
@@ -2806,16 +2785,16 @@ pub async fn add_device_msg(
 
 pub async fn was_device_msg_ever_added(context: &Context, label: &str) -> Result<bool, Error> {
     ensure!(!label.is_empty(), "empty label");
-    if let Ok(()) = context
+
+    if let Ok(count) = context
         .sql
-        .query_row(
+        .execute(
             "SELECT label FROM devmsglabels WHERE label=?",
-            paramsv![label],
-            |_| Ok(()),
+            paramsx![label],
         )
         .await
     {
-        return Ok(true);
+        return Ok(count > 0);
     }
 
     Ok(false)

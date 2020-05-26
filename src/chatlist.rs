@@ -383,15 +383,15 @@ impl Chatlist {
 
 /// Returns the number of archived chats
 pub async fn dc_get_archived_cnt(context: &Context) -> u32 {
-    context
+    let v: i32 = context
         .sql
-        .query_get_value(
-            context,
+        .query_value(
             "SELECT COUNT(*) FROM chats WHERE blocked=0 AND archived=1;",
-            paramsv![],
+            paramsx![],
         )
         .await
-        .unwrap_or_default()
+        .unwrap_or_default();
+    v as u32
 }
 
 async fn get_last_deaddrop_fresh_msg(context: &Context) -> Option<MsgId> {
@@ -399,21 +399,21 @@ async fn get_last_deaddrop_fresh_msg(context: &Context) -> Option<MsgId> {
     // sufficient as there are typically only few fresh messages.
     context
         .sql
-        .query_get_value(
-            context,
-            concat!(
-                "SELECT m.id",
-                " FROM msgs m",
-                " LEFT JOIN chats c",
-                "        ON c.id=m.chat_id",
-                " WHERE m.state=10",
-                "   AND m.hidden=0",
-                "   AND c.blocked=2",
-                " ORDER BY m.timestamp DESC, m.id DESC;"
-            ),
-            paramsv![],
+        .query_value(
+            r#"
+SELECT m.id
+  FROM msgs m
+  LEFT JOIN chats c
+        ON c.id=m.chat_id
+ WHERE m.state=10
+   AND m.hidden=0
+   AND c.blocked=2
+ ORDER BY m.timestamp DESC, m.id DESC;
+"#,
+            paramsx![],
         )
         .await
+        .ok()
 }
 
 #[cfg(test)]

@@ -125,18 +125,15 @@ impl<'a, 'b> MimeFactory<'a, 'b> {
             .sql
             .query_row(
                 "SELECT mime_in_reply_to, mime_references FROM msgs WHERE id=?",
-                paramsv![msg.id],
-                |row| {
-                    let in_reply_to: String = row.get(0)?;
-                    let references: String = row.get(1)?;
-
-                    Ok((
-                        render_rfc724_mid_list(&in_reply_to),
-                        render_rfc724_mid_list(&references),
-                    ))
-                },
+                paramsx![msg.id],
             )
-            .await?;
+            .await
+            .map(|(in_reply_to, references): (String, String)| {
+                (
+                    render_rfc724_mid_list(&in_reply_to),
+                    render_rfc724_mid_list(&references),
+                )
+            })?;
 
         let default_str = context
             .stock_str(StockMessage::StatusLine)

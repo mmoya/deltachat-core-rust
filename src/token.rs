@@ -46,12 +46,12 @@ pub async fn save(context: &Context, namespace: Namespace, foreign_id: ChatId) -
 pub async fn lookup(context: &Context, namespace: Namespace, foreign_id: ChatId) -> Option<String> {
     context
         .sql
-        .query_get_value::<String>(
-            context,
+        .query_value(
             "SELECT token FROM tokens WHERE namespc=? AND foreign_id=?;",
-            paramsv![namespace, foreign_id],
+            paramsx![namespace, foreign_id],
         )
         .await
+        .ok()
 }
 
 pub async fn lookup_or_new(context: &Context, namespace: Namespace, foreign_id: ChatId) -> String {

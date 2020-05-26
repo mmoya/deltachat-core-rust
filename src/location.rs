@@ -395,16 +395,10 @@ pub async fn get_kml(context: &Context, chat_id: ChatId) -> Result<(String, u32)
         .await
         .unwrap_or_default();
 
-    let (locations_send_begin, locations_send_until, locations_last_sent) = context.sql.query_row(
+    let (locations_send_begin, locations_send_until, locations_last_sent): (i64, i64, i64) = context.sql.query_row(
         "SELECT locations_send_begin, locations_send_until, locations_last_sent  FROM chats  WHERE id=?;",
-        paramsv![chat_id], |row| {
-            let send_begin: i64 = row.get(0)?;
-            let send_until: i64 = row.get(1)?;
-            let last_sent: i64 = row.get(2)?;
-
-            Ok((send_begin, send_until, last_sent))
-        })
-        .await?;
+        paramsx![chat_id]
+    ).await?;
 
     let now = time();
     let mut location_count = 0;
@@ -689,13 +683,12 @@ pub(crate) async fn job_maybe_send_locations_ended(
 
     let chat_id = ChatId::new(job.foreign_id);
 
-    let (send_begin, send_until) = job_try!(
+    let (send_begin, send_until): (i64, i64) = job_try!(
         context
             .sql
             .query_row(
                 "SELECT locations_send_begin, locations_send_until  FROM chats  WHERE id=?",
-                paramsv![chat_id],
-                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+                paramsx![chat_id],
             )
             .await
     );

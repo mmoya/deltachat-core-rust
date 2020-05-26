@@ -88,22 +88,21 @@ impl DcKey for SignedPublicKey {
     type KeyType = SignedPublicKey;
 
     async fn load_self(context: &Context) -> Result<Self::KeyType> {
-        match context
+        let res: std::result::Result<Vec<u8>, _> = context
             .sql
-            .query_row(
+            .query_value(
                 r#"
             SELECT public_key
               FROM keypairs
              WHERE addr=(SELECT value FROM config WHERE keyname="configured_addr")
                AND is_default=1;
             "#,
-                paramsv![],
-                |row| row.get::<_, Vec<u8>>(0),
+                paramsx![],
             )
-            .await
-        {
+            .await;
+        match res {
             Ok(bytes) => Self::from_slice(&bytes),
-            Err(sql::Error::Sql(rusqlite::Error::QueryReturnedNoRows)) => {
+            Err(sql::Error::Sqlx(sqlx::Error::RowNotFound)) => {
                 let keypair = generate_keypair(context).await?;
                 Ok(keypair.public)
             }
@@ -117,22 +116,21 @@ impl DcKey for SignedSecretKey {
     type KeyType = SignedSecretKey;
 
     async fn load_self(context: &Context) -> Result<Self::KeyType> {
-        match context
+        let res: std::result::Result<Vec<u8>, _> = context
             .sql
-            .query_row(
+            .query_value(
                 r#"
             SELECT private_key
               FROM keypairs
              WHERE addr=(SELECT value FROM config WHERE keyname="configured_addr")
                AND is_default=1;
             "#,
-                paramsv![],
-                |row| row.get::<_, Vec<u8>>(0),
+                paramsx![],
             )
-            .await
-        {
+            .await;
+        match res {
             Ok(bytes) => Self::from_slice(&bytes),
-            Err(sql::Error::Sql(rusqlite::Error::QueryReturnedNoRows)) => {
+            Err(sql::Error::Sqlx(sqlx::Error::RowNotFound)) => {
                 let keypair = generate_keypair(context).await?;
                 Ok(keypair.secret)
             }
@@ -150,7 +148,7 @@ async fn generate_keypair(context: &Context) -> Result<KeyPair> {
     let _guard = context.generating_key_mutex.lock().await;
 
     // Check if the key appeared while we were waiting on the lock.
-    match context
+    let res: std::result::Result<(Vec<u8>, Vec<u8>), _> = context
         .sql
         .query_row(
             r#"
@@ -159,17 +157,16 @@ async fn generate_keypair(context: &Context) -> Result<KeyPair> {
          WHERE addr=?1
            AND is_default=1;
         "#,
-            paramsv![addr],
-            |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, Vec<u8>>(1)?)),
+            paramsx![addr.to_string()],
         )
-        .await
-    {
+        .await;
+    match res {
         Ok((pub_bytes, sec_bytes)) => Ok(KeyPair {
             addr,
             public: SignedPublicKey::from_slice(&pub_bytes)?,
             secret: SignedSecretKey::from_slice(&sec_bytes)?,
         }),
-        Err(sql::Error::Sql(rusqlite::Error::QueryReturnedNoRows)) => {
+        Err(sql::Error::Sqlx(sqlx::Error::RowNotFound)) => {
             let start = std::time::Instant::now();
             let keytype = KeyGenType::from_i32(context.get_config_int(Config::KeyGenType).await)
                 .unwrap_or_default();
@@ -719,10 +716,12 @@ i8pcjGO+IZffvyZJVRWfVooBJmWWbPB1pueo3tx8w3+fcuzpxz+RLFKaPyqXO+dD
 
         let ctx1 = ctx.clone();
         let nrows = || async {
-            ctx1.sql
-                .query_get_value::<u32>(&ctx1, "SELECT COUNT(*) FROM keypairs;", paramsv![])
+            let val: i32 = ctx1
+                .sql
+                .query_value("SELECT COUNT(*) FROM keypairs;", paramsx![])
                 .await
-                .unwrap()
+                .unwrap();
+            val as usize
         };
         assert_eq!(nrows().await, 0);
         store_self_keypair(&ctx, &KEYPAIR, KeyPairUse::Default)

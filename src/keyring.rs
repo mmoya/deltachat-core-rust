@@ -32,9 +32,9 @@ impl Keyring {
     ) -> Result<Self> {
         let blob: Vec<u8> = context
             .sql
-            .query_get_value_result(
+            .query_value_optional(
                 "SELECT private_key FROM keypairs ORDER BY addr=? DESC, is_default DESC;",
-                paramsv![self_addr.as_ref().to_string()],
+                paramsx![self_addr.as_ref().to_string()],
             )
             .await?
             .unwrap_or_default();
