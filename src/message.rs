@@ -226,6 +226,7 @@ pub struct InvalidMsgId;
     ToSql,
     Serialize,
     Deserialize,
+    Sqlx,
 )]
 #[repr(u8)]
 pub(crate) enum MessengerMessage {
@@ -273,12 +274,14 @@ pub struct Message {
     pub(crate) param: Params,
 }
 
-impl<'a> sqlx::FromRow<'a, sqlx::sqlite::SqliteRow<'_>> for Message {
-    fn from_row(row: &sqlx::sqlite::SqliteRow<'_>) -> Result<Self, sqlx::Error> {
-        let id = row.get("id")?;
+impl<'a> sqlx::FromRow<'a, sqlx::sqlite::SqliteRow<'a>> for Message {
+    fn from_row(row: &sqlx::sqlite::SqliteRow<'a>) -> Result<Self, sqlx::Error> {
+        use sqlx::Row;
+
+        let id = row.try_get("id")?;
 
         let text;
-        if let Some(buf) = row.get::<Option<&[u8]>, _>("txt")? {
+        if let Some(buf) = row.try_get::<Option<&[u8]>, _>("txt")? {
             if let Ok(t) = String::from_utf8(buf.to_vec()) {
                 text = t;
             } else {
@@ -294,26 +297,29 @@ impl<'a> sqlx::FromRow<'a, sqlx::sqlite::SqliteRow<'_>> for Message {
 
         Ok(Message {
             id,
-            rfc724_mid: row.get::<String, _>("rfc724mid")?,
-            in_reply_to: row.get::<Option<String>, _>("mime_in_reply_to")?,
-            server_folder: row.get::<Option<String>, _>("server_folder")?,
-            server_uid: row.get("server_uid")?,
-            chat_id: row.get("chat_id")?,
-            from_id: row.get("from_id")?,
-            to_id: row.get("to_id")?,
-            timestamp_sort: row.get("timestamp")?,
-            timestamp_sent: row.get("timestamp_sent")?,
-            timestamp_rcvd: row.get("timestamp_rcvd")?,
-            viewtype: row.get("type")?,
-            state: row.get("state")?,
-            is_dc_message: row.get("msgrmsg")?,
+            rfc724_mid: row.try_get::<String, _>("rfc724mid")?,
+            in_reply_to: row.try_get::<Option<String>, _>("mime_in_reply_to")?,
+            server_folder: row.try_get::<Option<String>, _>("server_folder")?,
+            server_uid: row.try_get::<i64, _>("server_uid")? as u32,
+            chat_id: row.try_get("chat_id")?,
+            from_id: row.try_get::<i64, _>("from_id")? as u32,
+            to_id: row.try_get::<i64, _>("to_id")? as u32,
+            timestamp_sort: row.try_get("timestamp")?,
+            timestamp_sent: row.try_get("timestamp_sent")?,
+            timestamp_rcvd: row.try_get("timestamp_rcvd")?,
+            viewtype: row.try_get("type")?,
+            state: row.try_get("state")?,
+            is_dc_message: row.try_get("msgrmsg")?,
             text: Some(text),
-            param: row.get::<String, _>("param")?.parse().unwrap_or_default(),
-            starred: row.get("starred")?,
-            hidden: row.get("hidden")?,
-            location_id: row.get("location")?,
+            param: row
+                .try_get::<String, _>("param")?
+                .parse()
+                .unwrap_or_default(),
+            starred: row.try_get("starred")?,
+            hidden: row.try_get("hidden")?,
+            location_id: row.try_get::<i64, _>("location")? as u32,
             chat_blocked: row
-                .get::<Option<Blocked>, _>("blocked")?
+                .try_get::<Option<Blocked>, _>("blocked")?
                 .unwrap_or_default(),
         })
     }
@@ -1490,7 +1496,7 @@ pub async fn rfc724_mid_cnt(context: &Context, rfc724_mid: &str) -> i32 {
         )
         .await
     {
-        Ok(res) => res as i32,
+        Ok(res) => res,
         Err(err) => {
             error!(context, "dc_get_rfc724_mid_cnt() failed. {}", err);
             0

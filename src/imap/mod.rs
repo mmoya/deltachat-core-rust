@@ -458,7 +458,7 @@ impl Imap {
         folder: S,
     ) -> (u32, u32) {
         let key = format!("imap.mailbox.{}", folder.as_ref());
-        if let Some(entry) = context.sql.get_raw_config(context, &key).await {
+        if let Some(entry) = context.sql.get_raw_config(&key).await {
             // the entry has the format `imap.mailbox.<folder>=<uidvalidity>:<lastseenuid>`
             let mut parts = entry.split(':');
             (
@@ -1116,10 +1116,7 @@ impl Imap {
         context: &Context,
         create_mvbox: bool,
     ) -> Result<()> {
-        let folders_configured = context
-            .sql
-            .get_raw_config_int(context, "folders_configured")
-            .await;
+        let folders_configured = context.sql.get_raw_config_int("folders_configured").await;
         if folders_configured.unwrap_or_default() >= DC_FOLDERS_CONFIGURED_VERSION {
             return Ok(());
         }

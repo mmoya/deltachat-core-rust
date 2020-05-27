@@ -158,16 +158,21 @@ impl fmt::Display for Job {
     }
 }
 
-impl<'a> sqlx::FromRow<'a, sqlx::sqlite::SqliteRow<'_>> for Job {
-    fn from_row(row: &sqlx::sqlite::SqliteRow<'_>) -> Result<Self, sqlx::Error> {
+impl<'a> sqlx::FromRow<'a, sqlx::sqlite::SqliteRow<'a>> for Job {
+    fn from_row(row: &sqlx::sqlite::SqliteRow<'a>) -> Result<Self, sqlx::Error> {
+        use sqlx::Row;
+
         Ok(Job {
-            job_id: row.get("id")?,
-            action: row.get("action")?,
-            foreign_id: row.get("foreign_id")?,
-            desired_timestamp: row.get("desired_timestamp")?,
-            added_timestamp: row.get("added_timestamp")?,
-            tries: row.get("tries")?,
-            param: row.get::<String, _>("param")?.parse().unwrap_or_default(),
+            job_id: row.try_get::<i64, _>("id")? as u32,
+            action: row.try_get("action")?,
+            foreign_id: row.try_get::<i64, _>("foreign_id")? as u32,
+            desired_timestamp: row.try_get("desired_timestamp")?,
+            added_timestamp: row.try_get("added_timestamp")?,
+            tries: row.try_get::<i64, _>("tries")? as u32,
+            param: row
+                .try_get::<String, _>("param")?
+                .parse()
+                .unwrap_or_default(),
             pending_error: None,
         })
     }
@@ -522,10 +527,7 @@ impl Job {
             warn!(context, "could not configure folders: {:?}", err);
             return Status::RetryLater;
         }
-        let dest_folder = context
-            .sql
-            .get_raw_config(context, "configured_mvbox_folder")
-            .await;
+        let dest_folder = context.sql.get_raw_config("configured_mvbox_folder").await;
 
         if let Some(dest_folder) = dest_folder {
             let server_folder = msg.server_folder.as_ref().unwrap();
@@ -630,10 +632,7 @@ impl Job {
 
     async fn empty_server(&mut self, context: &Context, imap: &mut Imap) -> Status {
         if self.foreign_id & DC_EMPTY_MVBOX > 0 {
-            if let Some(mvbox_folder) = context
-                .sql
-                .get_raw_config(context, "configured_mvbox_folder")
-                .await
+            if let Some(mvbox_folder) = context.sql.get_raw_config("configured_mvbox_folder").await
             {
                 imap.empty_folder(context, &mvbox_folder).await;
             }

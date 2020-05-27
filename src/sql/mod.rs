@@ -331,7 +331,7 @@ impl Sql {
     }
 
     /// Get configuration options from the database.
-    pub async fn get_raw_config(&self, context: &Context, key: impl AsRef<str>) -> Option<String> {
+    pub async fn get_raw_config(&self, key: impl AsRef<str>) -> Option<String> {
         if !self.is_open().await || key.as_ref().is_empty() {
             return None;
         }
@@ -354,16 +354,14 @@ impl Sql {
             .await
     }
 
-    pub async fn get_raw_config_int(&self, context: &Context, key: impl AsRef<str>) -> Option<i32> {
-        self.get_raw_config(context, key)
-            .await
-            .and_then(|s| s.parse().ok())
+    pub async fn get_raw_config_int(&self, key: impl AsRef<str>) -> Option<i32> {
+        self.get_raw_config(key).await.and_then(|s| s.parse().ok())
     }
 
-    pub async fn get_raw_config_bool(&self, context: &Context, key: impl AsRef<str>) -> bool {
+    pub async fn get_raw_config_bool(&self, key: impl AsRef<str>) -> bool {
         // Not the most obvious way to encode bool as string, but it is matter
         // of backward compatibility.
-        let res = self.get_raw_config_int(context, key).await;
+        let res = self.get_raw_config_int(key).await;
         res.unwrap_or_default() > 0
     }
 
@@ -385,14 +383,8 @@ impl Sql {
             .await
     }
 
-    pub async fn get_raw_config_int64(
-        &self,
-        context: &Context,
-        key: impl AsRef<str>,
-    ) -> Option<i64> {
-        self.get_raw_config(context, key)
-            .await
-            .and_then(|r| r.parse().ok())
+    pub async fn get_raw_config_int64(&self, key: impl AsRef<str>) -> Option<i64> {
+        self.get_raw_config(key).await.and_then(|r| r.parse().ok())
     }
 
     /// Alternative to sqlite3_last_insert_rowid() which MUST NOT be used due to race conditions, see comment above.
@@ -721,7 +713,7 @@ async fn open(
         if sql.table_exists("config").await? {
             exists_before_update = true;
             dbversion_before_update = sql
-                .get_raw_config_int(context, "dbversion")
+                .get_raw_config_int("dbversion")
                 .await
                 .unwrap_or_default();
         }

@@ -541,18 +541,23 @@ pub struct Chat {
     pub mute_duration: MuteDuration,
 }
 
-impl<'a> sqlx::FromRow<'a, sqlx::sqlite::SqliteRow<'_>> for Chat {
-    fn from_row(row: &sqlx::sqlite::SqliteRow<'_>) -> Result<Self, sqlx::Error> {
+impl<'a> sqlx::FromRow<'a, sqlx::sqlite::SqliteRow<'a>> for Chat {
+    fn from_row(row: &sqlx::sqlite::SqliteRow<'a>) -> Result<Self, sqlx::Error> {
+        use sqlx::Row;
+
         let c = Chat {
-            id: row.get(0)?,
-            typ: row.get(1)?,
-            name: row.get::<String, _>(2)?,
-            grpid: row.get::<String, _>(3)?,
-            param: row.get::<String, _>(4)?.parse().unwrap_or_default(),
-            visibility: row.get(5)?,
-            blocked: row.get::<Option<_>, _>(5)?.unwrap_or_default(),
-            is_sending_locations: row.get(7)?,
-            mute_duration: row.get(8)?,
+            id: row.try_get("id")?,
+            typ: row.try_get("typ")?,
+            name: row.try_get::<String, _>("name")?,
+            grpid: row.try_get::<String, _>("grpid")?,
+            param: row
+                .try_get::<String, _>("param")?
+                .parse()
+                .unwrap_or_default(),
+            visibility: row.try_get("visibility")?,
+            blocked: row.try_get::<Option<_>, _>("blocked")?.unwrap_or_default(),
+            is_sending_locations: row.try_get("is_sending_locations")?,
+            mute_duration: row.try_get("mute_duration")?,
         };
 
         Ok(c)
@@ -2190,11 +2195,7 @@ pub(crate) async fn shall_attach_selfavatar(
     // versions before 12/2019 already allowed to set selfavatar, however, it was never sent to others.
     // to avoid sending out previously set selfavatars unexpectedly we added this additional check.
     // it can be removed after some time.
-    if !context
-        .sql
-        .get_raw_config_bool(context, "attach_selfavatar")
-        .await
-    {
+    if !context.sql.get_raw_config_bool("attach_selfavatar").await {
         return Ok(false);
     }
 

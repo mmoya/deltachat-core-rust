@@ -140,16 +140,24 @@ impl Default for Origin {
         Origin::Unknown
     }
 }
-impl<'a> sqlx::FromRow<'a, sqlx::sqlite::SqliteRow<'_>> for Contact {
-    fn from_row(row: &sqlx::sqlite::SqliteRow<'_>) -> Result<Self, sqlx::Error> {
+impl<'a> sqlx::FromRow<'a, sqlx::sqlite::SqliteRow<'a>> for Contact {
+    fn from_row(row: &sqlx::sqlite::SqliteRow<'a>) -> Result<Self, sqlx::Error> {
+        use sqlx::Row;
+
         let contact = Self {
-            id: row.get(0),
-            name: row.get::<String, _>(1)?,
-            authname: row.get::<String, _>(5)?,
-            addr: row.get::<String, _>(2)?,
-            blocked: row.get::<Option<i32>, _>(4)?.unwrap_or_default() != 0,
-            origin: row.get(3)?,
-            param: row.get::<String, _>(6)?.parse().unwrap_or_default(),
+            id: row.try_get::<i64, _>("id")? as u32,
+            name: row.try_get::<String, _>("name")?,
+            authname: row.try_get::<String, _>("authname")?,
+            addr: row.try_get::<String, _>("addr")?,
+            blocked: row
+                .try_get::<Option<i32>, _>("blocked")?
+                .unwrap_or_default()
+                != 0,
+            origin: row.try_get("origin")?,
+            param: row
+                .try_get::<String, _>("param")?
+                .parse()
+                .unwrap_or_default(),
         };
         Ok(contact)
     }
@@ -931,7 +939,7 @@ WHERE from_id=? AND state=?;
     pub async fn is_verified_ex(
         &self,
         context: &Context,
-        peerstate: Option<&Peerstate<'_>>,
+        peerstate: Option<&Peerstate>,
     ) -> VerifiedStatus {
         // We're always sort of secured-verified as we could verify the key on this device any time with the key
         // on this device

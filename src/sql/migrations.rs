@@ -329,10 +329,9 @@ CREATE INDEX devmsglabels_index1 ON devmsglabels (label);
 
     // records in the devmsglabels are kept when the message is deleted.
     // so, msg_id may or may not exist.
-    if dbversion < 59 {
-        if exists_before_update && sql.get_raw_config_int(context, "bcc_self").await.is_none() {
-            sql.set_raw_config_int(context, "bcc_self", 1).await?;
-        }
+    if dbversion < 59 && exists_before_update && sql.get_raw_config_int("bcc_self").await.is_none()
+    {
+        sql.set_raw_config_int(context, "bcc_self", 1).await?;
     }
 
     migrate(

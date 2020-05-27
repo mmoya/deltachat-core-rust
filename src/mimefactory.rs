@@ -208,7 +208,7 @@ impl<'a, 'b> MimeFactory<'a, 'b> {
         Ok(res)
     }
 
-    async fn peerstates_for_recipients(&self) -> Result<Vec<(Option<Peerstate<'_>>, &str)>, Error> {
+    async fn peerstates_for_recipients(&self) -> Result<Vec<(Option<Peerstate>, &str)>, Error> {
         let self_addr = self
             .context
             .get_config(Config::ConfiguredAddr)

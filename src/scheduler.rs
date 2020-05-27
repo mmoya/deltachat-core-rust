@@ -574,11 +574,7 @@ struct ImapConnectionHandlers {
 }
 
 async fn get_watch_folder(context: &Context, config_name: impl AsRef<str>) -> Option<String> {
-    match context
-        .sql
-        .get_raw_config(context, config_name.as_ref())
-        .await
-    {
+    match context.sql.get_raw_config(config_name.as_ref()).await {
         Some(name) => Some(name),
         None => {
             if config_name.as_ref() == "configured_inbox_folder" {

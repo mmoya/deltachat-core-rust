@@ -97,7 +97,7 @@ pub async fn has_backup(context: &Context, dir_name: impl AsRef<Path>) -> Result
                 let sql = Sql::new();
                 sql.open(context, &path, true).await?;
                 let curr_backup_time = sql
-                    .get_raw_config_int(context, "backup_time")
+                    .get_raw_config_int("backup_time")
                     .await
                     .unwrap_or_default();
                 if curr_backup_time > newest_backup_time {
@@ -244,7 +244,7 @@ pub fn create_setup_code(_context: &Context) -> String {
 }
 
 async fn maybe_add_bcc_self_device_msg(context: &Context) -> Result<()> {
-    if !context.sql.get_raw_config_bool(context, "bcc_self").await {
+    if !context.sql.get_raw_config_bool("bcc_self").await {
         let mut msg = Message::new(Viewtype::Text);
         // TODO: define this as a stockstring once the wording is settled.
         msg.text = Some(

@@ -91,7 +91,7 @@ impl EncryptHelper {
         context: &Context,
         min_verified: PeerstateVerifiedStatus,
         mail_to_encrypt: lettre_email::PartBuilder,
-        peerstates: Vec<(Option<Peerstate<'_>>, &str)>,
+        peerstates: Vec<(Option<Peerstate>, &str)>,
     ) -> Result<String> {
         let mut keyring = Keyring::default();
 
@@ -144,7 +144,7 @@ pub async fn try_decrypt(
                 peerstate.save_to_db(&context.sql, false).await?;
             }
         } else if let Some(ref header) = autocryptheader {
-            let p = Peerstate::from_header(context, header, message_time);
+            let p = Peerstate::from_header(header, message_time);
             p.save_to_db(&context.sql, true).await?;
             peerstate = Some(p);
         }

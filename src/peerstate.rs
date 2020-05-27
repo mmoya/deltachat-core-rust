@@ -1,9 +1,6 @@
 //! # [Autocrypt Peer State](https://autocrypt.org/level1.html#peer-state-management) module
 use std::collections::HashSet;
 use std::convert::TryFrom;
-use std::fmt;
-
-use num_traits::FromPrimitive;
 
 use crate::aheader::*;
 use crate::constants::*;
@@ -26,8 +23,8 @@ pub enum PeerstateVerifiedStatus {
 }
 
 /// Peerstate represents the state of an Autocrypt peer.
-pub struct Peerstate<'a> {
-    pub context: &'a Context,
+#[derive(Debug, PartialEq, Eq)]
+pub struct Peerstate {
     pub addr: String,
     pub last_seen: i64,
     pub last_seen_autocrypt: i64,
@@ -43,43 +40,31 @@ pub struct Peerstate<'a> {
     pub degrade_event: Option<DegradeEvent>,
 }
 
-impl<'a> PartialEq for Peerstate<'a> {
-    fn eq(&self, other: &Peerstate) -> bool {
-        self.addr == other.addr
-            && self.last_seen == other.last_seen
-            && self.last_seen_autocrypt == other.last_seen_autocrypt
-            && self.prefer_encrypt == other.prefer_encrypt
-            && self.public_key == other.public_key
-            && self.public_key_fingerprint == other.public_key_fingerprint
-            && self.gossip_key == other.gossip_key
-            && self.gossip_timestamp == other.gossip_timestamp
-            && self.gossip_key_fingerprint == other.gossip_key_fingerprint
-            && self.verified_key == other.verified_key
-            && self.verified_key_fingerprint == other.verified_key_fingerprint
-            && self.to_save == other.to_save
-            && self.degrade_event == other.degrade_event
-    }
-}
+impl<'a> sqlx::FromRow<'a, sqlx::sqlite::SqliteRow<'a>> for Peerstate {
+    fn from_row(row: &sqlx::sqlite::SqliteRow<'a>) -> Result<Self, sqlx::Error> {
+        use sqlx::Row;
 
-impl<'a> Eq for Peerstate<'a> {}
+        let mut res = Self::new(row.try_get("addr")?);
 
-impl<'a> fmt::Debug for Peerstate<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_struct("Peerstate")
-            .field("addr", &self.addr)
-            .field("last_seen", &self.last_seen)
-            .field("last_seen_autocrypt", &self.last_seen_autocrypt)
-            .field("prefer_encrypt", &self.prefer_encrypt)
-            .field("public_key", &self.public_key)
-            .field("public_key_fingerprint", &self.public_key_fingerprint)
-            .field("gossip_key", &self.gossip_key)
-            .field("gossip_timestamp", &self.gossip_timestamp)
-            .field("gossip_key_fingerprint", &self.gossip_key_fingerprint)
-            .field("verified_key", &self.verified_key)
-            .field("verified_key_fingerprint", &self.verified_key_fingerprint)
-            .field("to_save", &self.to_save)
-            .field("degrade_event", &self.degrade_event)
-            .finish()
+        res.last_seen = row.try_get("last_seen")?;
+        res.last_seen_autocrypt = row.try_get("last_seen_autocrypt")?;
+        res.prefer_encrypt = row.try_get("prefer_encrypt")?;
+        res.gossip_timestamp = row.try_get("gossip_timestamp")?;
+
+        res.public_key_fingerprint = row.try_get("public_key_fingerprint")?;
+        res.gossip_key_fingerprint = row.try_get("gossip_key_fingerprint")?;
+        res.verified_key_fingerprint = row.try_get("verified_key_fingerprint")?;
+        res.public_key = row
+            .try_get::<Option<&[u8]>, _>("public_key")?
+            .and_then(|blob| Key::from_slice(blob, KeyType::Public).ok());
+        res.gossip_key = row
+            .try_get::<Option<&[u8]>, _>("gossip_key")?
+            .and_then(|blob| Key::from_slice(blob, KeyType::Public).ok());
+        res.verified_key = row
+            .try_get::<Option<&[u8]>, _>("verified_key")?
+            .and_then(|blob| Key::from_slice(blob, KeyType::Public).ok());
+
+        Ok(res)
     }
 }
 
@@ -100,10 +85,9 @@ pub enum DegradeEvent {
     FingerprintChanged = 0x02,
 }
 
-impl<'a> Peerstate<'a> {
-    pub fn new(context: &'a Context, addr: String) -> Self {
+impl Peerstate {
+    pub fn new(addr: String) -> Self {
         Peerstate {
-            context,
             addr,
             last_seen: 0,
             last_seen_autocrypt: 0,
@@ -120,8 +104,8 @@ impl<'a> Peerstate<'a> {
         }
     }
 
-    pub fn from_header(context: &'a Context, header: &Aheader, message_time: i64) -> Self {
-        let mut res = Self::new(context, header.addr.clone());
+    pub fn from_header(header: &Aheader, message_time: i64) -> Self {
+        let mut res = Self::new(header.addr.clone());
 
         res.last_seen = message_time;
         res.last_seen_autocrypt = message_time;
@@ -133,8 +117,8 @@ impl<'a> Peerstate<'a> {
         res
     }
 
-    pub fn from_gossip(context: &'a Context, gossip_header: &Aheader, message_time: i64) -> Self {
-        let mut res = Self::new(context, gossip_header.addr.clone());
+    pub fn from_gossip(gossip_header: &Aheader, message_time: i64) -> Self {
+        let mut res = Self::new(gossip_header.addr.clone());
 
         res.gossip_timestamp = message_time;
         res.to_save = Some(ToSave::All);
@@ -144,7 +128,7 @@ impl<'a> Peerstate<'a> {
         res
     }
 
-    pub async fn from_addr(context: &'a Context, addr: &str) -> Option<Peerstate<'a>> {
+    pub async fn from_addr(context: &Context, addr: &str) -> Option<Peerstate> {
         let query = r#"
 SELECT addr, last_seen, last_seen_autocrypt, prefer_encrypted, public_key, 
        gossip_timestamp, gossip_key, public_key_fingerprint, gossip_key_fingerprint, 
@@ -155,11 +139,7 @@ SELECT addr, last_seen, last_seen_autocrypt, prefer_encrypted, public_key,
         Self::from_stmt(context, query, paramsx![addr]).await
     }
 
-    pub async fn from_fingerprint(
-        context: &'a Context,
-        _sql: &Sql,
-        fingerprint: &str,
-    ) -> Option<Peerstate<'a>> {
+    pub async fn from_fingerprint(context: &Context, fingerprint: &str) -> Option<Peerstate> {
         let query = r#"
 SELECT addr, last_seen, last_seen_autocrypt, prefer_encrypted, public_key,
        gossip_timestamp, gossip_key, public_key_fingerprint, gossip_key_fingerprint,
@@ -179,50 +159,16 @@ SELECT addr, last_seen, last_seen_autocrypt, prefer_encrypted, public_key,
     }
 
     async fn from_stmt(
-        context: &'a Context,
+        context: &Context,
         query: &str,
         params: sqlx::sqlite::SqliteArguments,
-    ) -> Option<Peerstate<'a>> {
-        if let Ok((
-            addr,
-            last_seen,
-            last_seen_autocrypt,
-            prefer_encrypt,
-            public_key,
-            gossip_timestamp,
-            gossip_key,
-            public_key_fingerprint,
-            gossip_key_fingerprint,
-            verified_key,
-            verified_key_fingerprint,
-        )) = context.sql.query_row(query, params).await
-        {
-            /* all the above queries start with this: SELECT
-            addr, last_seen, last_seen_autocrypt, prefer_encrypted,
-            public_key, gossip_timestamp, gossip_key, public_key_fingerprint,
-            gossip_key_fingerprint, verified_key, verified_key_fingerprint
-            */
-            let mut res = Self::new(context, addr);
-
-            res.last_seen = last_seen;
-            res.last_seen_autocrypt = last_seen_autocrypt;
-            res.prefer_encrypt = prefer_encrypt;
-            res.gossip_timestamp = gossip_timestamp;
-
-            res.public_key_fingerprint = public_key_fingerprint;
-            res.gossip_key_fingerprint = gossip_key_fingerprint;
-            res.verified_key_fingerprint = verified_key_fingerprint;
-            res.public_key =
-                public_key.and_then(|blob: Vec<u8>| Key::from_slice(&blob, KeyType::Public).ok());
-            res.gossip_key =
-                gossip_key.and_then(|blob: Vec<u8>| Key::from_slice(&blob, KeyType::Public).ok());
-            res.verified_key =
-                verified_key.and_then(|blob: Vec<u8>| Key::from_slice(&blob, KeyType::Public).ok());
-
-            Some(res)
-        } else {
-            None
-        }
+    ) -> Option<Peerstate> {
+        /* all the above queries start with this: SELECT
+        addr, last_seen, last_seen_autocrypt, prefer_encrypted,
+        public_key, gossip_timestamp, gossip_key, public_key_fingerprint,
+        gossip_key_fingerprint, verified_key, verified_key_fingerprint
+        */
+        context.sql.query_row(query, params).await.ok()
     }
 
     pub fn recalc_fingerprint(&mut self) {
@@ -478,7 +424,6 @@ mod tests {
     use super::*;
     use crate::test_utils::*;
     use pretty_assertions::assert_eq;
-    use tempfile::TempDir;
 
     #[async_std::test]
     async fn test_peerstate_save_to_db() {
@@ -488,7 +433,6 @@ mod tests {
         let pub_key = crate::key::Key::from(alice_keypair().public);
 
         let mut peerstate = Peerstate {
-            context: &ctx.ctx,
             addr: addr.into(),
             last_seen: 10,
             last_seen_autocrypt: 11,
@@ -516,10 +460,9 @@ mod tests {
         // clear to_save, as that is not persissted
         peerstate.to_save = None;
         assert_eq!(peerstate, peerstate_new);
-        let peerstate_new2 =
-            Peerstate::from_fingerprint(&ctx.ctx, &ctx.ctx.sql, &pub_key.fingerprint())
-                .await
-                .expect("failed to load peerstate from db");
+        let peerstate_new2 = Peerstate::from_fingerprint(&ctx.ctx, &pub_key.fingerprint())
+            .await
+            .expect("failed to load peerstate from db");
         assert_eq!(peerstate, peerstate_new2);
     }
 
@@ -530,7 +473,6 @@ mod tests {
         let pub_key = crate::key::Key::from(alice_keypair().public);
 
         let peerstate = Peerstate {
-            context: &ctx.ctx,
             addr: addr.into(),
             last_seen: 10,
             last_seen_autocrypt: 11,
@@ -564,7 +506,6 @@ mod tests {
         let pub_key = crate::key::Key::from(alice_keypair().public);
 
         let mut peerstate = Peerstate {
-            context: &ctx.ctx,
             addr: addr.into(),
             last_seen: 10,
             last_seen_autocrypt: 11,
@@ -592,12 +533,5 @@ mod tests {
         // clear to_save, as that is not persissted
         peerstate.to_save = None;
         assert_eq!(peerstate, peerstate_new);
-    }
-
-    // TODO: don't copy this from stress.rs
-    #[allow(dead_code)]
-    struct TestContext {
-        ctx: Context,
-        dir: TempDir,
     }
 }

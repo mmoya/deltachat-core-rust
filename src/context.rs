@@ -261,7 +261,7 @@ impl Context {
         let is_configured = self.get_config_int(Config::Configured).await;
         let dbversion = self
             .sql
-            .get_raw_config_int(self, "dbversion")
+            .get_raw_config_int("dbversion")
             .await
             .unwrap_or_default();
         let journal_mode = self
@@ -273,13 +273,13 @@ impl Context {
         let mdns_enabled = self.get_config_int(Config::MdnsEnabled).await;
         let bcc_self = self.get_config_int(Config::BccSelf).await;
 
-        let prv_key_cnt = self
+        let prv_key_cnt: Option<i32> = self
             .sql
             .query_value("SELECT COUNT(*) FROM keypairs;", paramsx![])
             .await
             .ok();
 
-        let pub_key_cnt = self
+        let pub_key_cnt: Option<i32> = self
             .sql
             .query_value("SELECT COUNT(*) FROM acpeerstates;", paramsx![])
             .await
@@ -295,18 +295,18 @@ impl Context {
         let mvbox_move = self.get_config_int(Config::MvboxMove).await;
         let folders_configured = self
             .sql
-            .get_raw_config_int(self, "folders_configured")
+            .get_raw_config_int("folders_configured")
             .await
             .unwrap_or_default();
 
         let configured_sentbox_folder = self
             .sql
-            .get_raw_config(self, "configured_sentbox_folder")
+            .get_raw_config("configured_sentbox_folder")
             .await
             .unwrap_or_else(|| "<unset>".to_string());
         let configured_mvbox_folder = self
             .sql
-            .get_raw_config(self, "configured_mvbox_folder")
+            .get_raw_config("configured_mvbox_folder")
             .await
             .unwrap_or_else(|| "<unset>".to_string());
 
@@ -447,10 +447,7 @@ impl Context {
     }
 
     pub async fn is_sentbox(&self, folder_name: impl AsRef<str>) -> bool {
-        let sentbox_name = self
-            .sql
-            .get_raw_config(self, "configured_sentbox_folder")
-            .await;
+        let sentbox_name = self.sql.get_raw_config("configured_sentbox_folder").await;
         if let Some(name) = sentbox_name {
             name == folder_name.as_ref()
         } else {
@@ -459,10 +456,7 @@ impl Context {
     }
 
     pub async fn is_mvbox(&self, folder_name: impl AsRef<str>) -> bool {
-        let mvbox_name = self
-            .sql
-            .get_raw_config(self, "configured_mvbox_folder")
-            .await;
+        let mvbox_name = self.sql.get_raw_config("configured_mvbox_folder").await;
 
         if let Some(name) = mvbox_name {
             name == folder_name.as_ref()
