@@ -262,7 +262,7 @@ pub async fn is_sending_locations_to_chat(context: &Context, chat_id: ChatId) ->
         .sql
         .exists(
             "SELECT id  FROM chats  WHERE (? OR id=?)   AND locations_send_until>?;",
-            paramsv![if chat_id.is_unset() { 1 } else { 0 }, chat_id, time()],
+            paramsx![if chat_id.is_unset() { 1 } else { 0 }, chat_id, time()],
         )
         .await
         .unwrap_or_default()
@@ -562,7 +562,6 @@ INSERT INTO locations
                 newest_location_id = context
                     .sql
                     .get_rowid2(
-                        context,
                         "locations",
                         "timestamp",
                         timestamp,

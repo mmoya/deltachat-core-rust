@@ -1320,7 +1320,7 @@ SELECT
                 .sql
                 .exists(
                     "SELECT contact_id FROM msgs_mdns WHERE msg_id=? AND contact_id=?;",
-                    paramsv![msg_id, from_id as i32,],
+                    paramsx![msg_id, from_id as i32,],
                 )
                 .await
                 .unwrap_or_default();

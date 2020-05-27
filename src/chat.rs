@@ -786,14 +786,13 @@ SELECT c.id, c.type, c.name, c.grpid, c.param, c.archived,
             };
 
             if self.typ == Chattype::Single {
-                if let Some(id) = context
+                if let Ok(id) = context
                     .sql
                     .query_value(
                         "SELECT contact_id FROM chats_contacts WHERE chat_id=?;",
                         paramsx![self.id],
                     )
                     .await
-                    .ok()
                 {
                     to_id = id;
                 } else {
@@ -931,7 +930,6 @@ SELECT c.id, c.type, c.name, c.grpid, c.param, c.archived,
                 location_id = context
                     .sql
                     .get_rowid2(
-                        context,
                         "locations",
                         "timestamp",
                         timestamp,
@@ -962,7 +960,6 @@ SELECT c.id, c.type, c.name, c.grpid, c.param, c.archived,
                         ]
                     ).await.is_ok() {
                         msg_id = context.sql.get_rowid(
-                            context,
                             "msgs",
                             "rfc724_mid",
                             new_rfc724_mid,
@@ -1426,7 +1423,7 @@ pub async fn is_contact_in_chat(context: &Context, chat_id: ChatId, contact_id: 
         .sql
         .exists(
             "SELECT contact_id FROM chats_contacts WHERE chat_id=? AND contact_id=?;",
-            paramsv![chat_id, contact_id as i32],
+            paramsx![chat_id, contact_id as i32],
         )
         .await
         .unwrap_or_default()
@@ -1685,7 +1682,7 @@ pub async fn marknoticed_chat(context: &Context, chat_id: ChatId) -> Result<(), 
         .sql
         .exists(
             "SELECT id FROM msgs  WHERE chat_id=? AND state=?;",
-            paramsv![chat_id, MessageState::InFresh],
+            paramsx![chat_id, MessageState::InFresh],
         )
         .await?
     {
@@ -1695,10 +1692,12 @@ pub async fn marknoticed_chat(context: &Context, chat_id: ChatId) -> Result<(), 
     context
         .sql
         .execute(
-            "UPDATE msgs
-            SET state=13
-          WHERE chat_id=?
-            AND state=10;",
+            r#"
+UPDATE msgs
+  SET state=13
+  WHERE chat_id=?
+    AND state=10;
+"#,
             paramsx![chat_id],
         )
         .await?;
@@ -1714,12 +1713,7 @@ pub async fn marknoticed_chat(context: &Context, chat_id: ChatId) -> Result<(), 
 pub async fn marknoticed_all_chats(context: &Context) -> Result<(), Error> {
     if !context
         .sql
-        .exists(
-            "SELECT id
-           FROM msgs
-          WHERE state=10;",
-            paramsv![],
-        )
+        .exists("SELECT id FROM msgs WHERE state=10;", paramsx![])
         .await?
     {
         return Ok(());
@@ -1727,12 +1721,7 @@ pub async fn marknoticed_all_chats(context: &Context) -> Result<(), Error> {
 
     context
         .sql
-        .execute(
-            "UPDATE msgs
-            SET state=13
-          WHERE state=10;",
-            paramsx![],
-        )
+        .execute("UPDATE msgs SET state=13 WHERE state=10;", paramsx![])
         .await?;
 
     context.emit_event(Event::MsgsChanged {
@@ -1940,10 +1929,7 @@ pub async fn create_group_chat(
         ],
     ).await?;
 
-    let row_id = context
-        .sql
-        .get_rowid(context, "chats", "grpid", grpid)
-        .await?;
+    let row_id = context.sql.get_rowid("chats", "grpid", grpid).await?;
     let chat_id = ChatId::new(row_id);
     if !chat_id.is_error() {
         if add_to_chat_contacts_table(context, chat_id, DC_CONTACT_ID_SELF).await {
@@ -2125,7 +2111,7 @@ async fn real_group_exists(context: &Context, chat_id: ChatId) -> bool {
         .sql
         .exists(
             "SELECT id FROM chats WHERE id=? AND (type=120 OR type=130);",
-            paramsv![chat_id],
+            paramsx![chat_id],
         )
         .await
         .unwrap_or_default()
@@ -2424,7 +2410,7 @@ pub(crate) async fn is_group_explicitly_left(
         .sql
         .exists(
             "SELECT id FROM leftgrps WHERE grpid=?;",
-            paramsv![grpid.as_ref()],
+            paramsx![grpid.as_ref()],
         )
         .await
         .map_err(Into::into)
@@ -2754,7 +2740,7 @@ INSERT INTO msgs (chat_id, from_id, to_id, timestamp, type, state, txt, param, r
 
         let row_id = context
             .sql
-            .get_rowid(context, "msgs", "rfc724_mid", &rfc724_mid)
+            .get_rowid("msgs", "rfc724_mid", &rfc724_mid)
             .await?;
         msg_id = MsgId::new(row_id);
     }
@@ -2837,7 +2823,7 @@ pub(crate) async fn add_info_msg(context: &Context, chat_id: ChatId, text: impl 
 
     let row_id = context
         .sql
-        .get_rowid(context, "msgs", "rfc724_mid", &rfc724_mid)
+        .get_rowid("msgs", "rfc724_mid", &rfc724_mid)
         .await
         .unwrap_or_default();
     context.emit_event(Event::MsgsChanged {

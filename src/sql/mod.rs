@@ -7,7 +7,7 @@ use std::collections::HashSet;
 use std::path::Path;
 use std::time::Duration;
 
-use rusqlite::{Connection, Error as SqlError, OpenFlags};
+use rusqlite::OpenFlags;
 use sqlx::Cursor;
 
 use crate::chat::{update_device_icon, update_saved_messages_icon};
@@ -43,6 +43,8 @@ pub enum Error {
     Other(#[from] crate::error::Error),
     #[error("{0}")]
     Sqlx(#[from] sqlx::Error),
+    #[error("{0}: {1}")]
+    SqlxWithContext(String, #[source] sqlx::Error),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -97,6 +99,7 @@ impl Sql {
         Ok(())
     }
 
+    /// Execute a single query.
     pub async fn execute<S: AsRef<str>>(
         &self,
         statement: S,
@@ -173,14 +176,27 @@ impl Sql {
 
     /// Return `true` if a query in the SQL statement it executes returns one or more
     /// rows and false if the SQL returns an empty set.
-    pub async fn exists(&self, sql: &str, params: Vec<&dyn crate::ToSql>) -> Result<bool> {
-        let res = {
-            let conn = self.get_conn().await?;
-            let mut stmt = conn.prepare(sql)?;
-            stmt.exists(&params)
-        };
+    pub async fn exists<S: AsRef<str>>(
+        &self,
+        statement: S,
+        params: sqlx::sqlite::SqliteArguments,
+    ) -> Result<bool> {
+        let lock = self.xpool.read().await;
+        let xpool = lock.as_ref().ok_or_else(|| Error::SqlNoConnection)?;
 
-        res.map_err(Into::into)
+        let mut rows = sqlx::query(statement.as_ref())
+            .bind_all(params)
+            .fetch(xpool);
+
+        match rows.next().await {
+            Ok(Some(_)) => Ok(true),
+            Ok(None) => Ok(false),
+            Err(sqlx::Error::RowNotFound) => Ok(false),
+            Err(err) => Err(Error::SqlxWithContext(
+                format!("exists: '{}'", statement.as_ref()),
+                err,
+            )),
+        }
     }
 
     /// Execute a query which is expected to return one row.
@@ -254,15 +270,11 @@ impl Sql {
     }
 
     pub async fn table_exists(&self, name: impl AsRef<str>) -> Result<bool> {
-        let exists = self
-            .query_row_optional::<(String,), _>(
-                "SELECT name FROM sqlite_master WHERE type = 'table' AND name=?",
-                paramsx![name.as_ref()],
-            )
-            .await?
-            .is_some();
-
-        Ok(exists)
+        self.exists(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name=?",
+            paramsx![name.as_ref()],
+        )
+        .await
     }
 
     /// Set private configuration options.
@@ -271,45 +283,35 @@ impl Sql {
     /// will already have been logged.
     pub async fn set_raw_config(
         &self,
-        context: &Context,
+        _context: &Context,
         key: impl AsRef<str>,
         value: Option<&str>,
     ) -> Result<()> {
-        if !self.is_open().await {
-            error!(context, "set_raw_config(): Database not ready.");
-            return Err(Error::SqlNoConnection);
-        }
-
         let key = key.as_ref();
-        let res = if let Some(ref value) = value {
+
+        if let Some(ref value) = value {
             let exists = self
-                .exists("SELECT value FROM config WHERE keyname=?;", paramsv![key])
+                .exists("SELECT value FROM config WHERE keyname=?;", paramsx![key])
                 .await?;
             if exists {
                 self.execute(
                     "UPDATE config SET value=? WHERE keyname=?;",
                     paramsx![value, key],
                 )
-                .await
+                .await?;
             } else {
                 self.execute(
                     "INSERT INTO config (keyname, value) VALUES (?, ?);",
                     paramsx![key, value],
                 )
-                .await
+                .await?;
             }
         } else {
             self.execute("DELETE FROM config WHERE keyname=?;", paramsx![key])
-                .await
-        };
-
-        match res {
-            Ok(_) => Ok(()),
-            Err(err) => {
-                error!(context, "set_raw_config(): Cannot change value. {:?}", &err);
-                Err(err)
-            }
+                .await?;
         }
+
+        Ok(())
     }
 
     /// Get configuration options from the database.
@@ -374,75 +376,43 @@ impl Sql {
     /// eg. if a Message-ID is split into different messages.
     pub async fn get_rowid(
         &self,
-        _context: &Context,
         table: impl AsRef<str>,
         field: impl AsRef<str>,
         value: impl AsRef<str>,
     ) -> Result<u32> {
-        let res = {
-            let mut conn = self.get_conn().await?;
-            get_rowid(&mut conn, table, field, value)
-        };
+        // alternative to sqlite3_last_insert_rowid() which MUST NOT be used due to race conditions, see comment above.
+        // the ORDER BY ensures, this function always returns the most recent id,
+        // eg. if a Message-ID is split into different messages.
+        let query = format!(
+            "SELECT id FROM {} WHERE {}=? ORDER BY id DESC",
+            table.as_ref(),
+            field.as_ref(),
+        );
 
-        res.map_err(Into::into)
+        let res: i64 = self.query_value(&query, paramsx![value.as_ref()]).await?;
+
+        Ok(res as u32)
     }
 
     pub async fn get_rowid2(
         &self,
-        _context: &Context,
         table: impl AsRef<str>,
         field: impl AsRef<str>,
         value: i64,
         field2: impl AsRef<str>,
         value2: i32,
     ) -> Result<u32> {
-        let res = {
-            let mut conn = self.get_conn().await?;
-            get_rowid2(&mut conn, table, field, value, field2, value2)
-        };
-
-        res.map_err(Into::into)
-    }
-}
-
-pub fn get_rowid(
-    conn: &mut Connection,
-    table: impl AsRef<str>,
-    field: impl AsRef<str>,
-    value: impl AsRef<str>,
-) -> std::result::Result<u32, SqlError> {
-    // alternative to sqlite3_last_insert_rowid() which MUST NOT be used due to race conditions, see comment above.
-    // the ORDER BY ensures, this function always returns the most recent id,
-    // eg. if a Message-ID is split into different messages.
-    let query = format!(
-        "SELECT id FROM {} WHERE {}=? ORDER BY id DESC",
-        table.as_ref(),
-        field.as_ref(),
-    );
-
-    conn.query_row(&query, params![value.as_ref()], |row| row.get::<_, u32>(0))
-}
-
-pub fn get_rowid2(
-    conn: &mut Connection,
-    table: impl AsRef<str>,
-    field: impl AsRef<str>,
-    value: i64,
-    field2: impl AsRef<str>,
-    value2: i32,
-) -> std::result::Result<u32, SqlError> {
-    conn.query_row(
-        &format!(
-            "SELECT id FROM {} WHERE {}={} AND {}={} ORDER BY id DESC",
+        let query = format!(
+            "SELECT id FROM {} WHERE {}=? AND {}=? ORDER BY id DESC",
             table.as_ref(),
             field.as_ref(),
-            value,
             field2.as_ref(),
-            value2,
-        ),
-        params![],
-        |row| row.get::<_, u32>(0),
-    )
+        );
+
+        let res: i64 = self.query_value(query, paramsx![value, value2]).await?;
+
+        Ok(res as u32)
+    }
 }
 
 pub async fn housekeeping(context: &Context) {
@@ -694,10 +664,9 @@ async fn open(
 
         if sql.table_exists("config").await? {
             exists_before_update = true;
-            dbversion_before_update = sql
-                .get_raw_config_int("dbversion")
-                .await
-                .unwrap_or_default();
+            if let Some(version) = sql.get_raw_config_int("dbversion").await {
+                dbversion_before_update = version;
+            }
         }
 
         // (1) update low-level database structure.

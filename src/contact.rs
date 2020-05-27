@@ -500,10 +500,7 @@ WHERE from_id=? AND state=?;
                 .await
                 .is_ok()
             {
-                row_id = context
-                    .sql
-                    .get_rowid(context, "contacts", "addr", &addr)
-                    .await?;
+                row_id = context.sql.get_rowid("contacts", "addr", &addr).await?;
                 sth_modified = Modifier::Created;
                 info!(context, "added contact id={} addr={}", row_id, &addr);
             } else {
@@ -1009,7 +1006,7 @@ WHERE from_id=? AND state=?;
             .sql
             .exists(
                 "SELECT id FROM contacts WHERE id=?;",
-                paramsv![contact_id as i32],
+                paramsx![contact_id as i32],
             )
             .await
             .unwrap_or_default()

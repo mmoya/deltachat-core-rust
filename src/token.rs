@@ -67,7 +67,7 @@ pub async fn exists(context: &Context, namespace: Namespace, token: &str) -> boo
         .sql
         .exists(
             "SELECT id FROM tokens WHERE namespc=? AND token=?;",
-            paramsv![namespace, token],
+            paramsx![namespace, token],
         )
         .await
         .unwrap_or_default()

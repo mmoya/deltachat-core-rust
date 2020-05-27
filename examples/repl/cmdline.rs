@@ -28,7 +28,7 @@ async fn reset_tables(context: &Context, bits: i32) {
     if 0 != bits & 1 {
         context
             .sql()
-            .execute("DELETE FROM jobs;", paramsv![])
+            .execute("DELETE FROM jobs;", paramsx![])
             .await
             .unwrap();
         println!("(1) Jobs reset.");
@@ -36,7 +36,7 @@ async fn reset_tables(context: &Context, bits: i32) {
     if 0 != bits & 2 {
         context
             .sql()
-            .execute("DELETE FROM acpeerstates;", paramsv![])
+            .execute("DELETE FROM acpeerstates;", paramsx![])
             .await
             .unwrap();
         println!("(2) Peerstates reset.");
@@ -44,7 +44,7 @@ async fn reset_tables(context: &Context, bits: i32) {
     if 0 != bits & 4 {
         context
             .sql()
-            .execute("DELETE FROM keypairs;", paramsv![])
+            .execute("DELETE FROM keypairs;", paramsx![])
             .await
             .unwrap();
         println!("(4) Private keypairs reset.");
@@ -52,35 +52,35 @@ async fn reset_tables(context: &Context, bits: i32) {
     if 0 != bits & 8 {
         context
             .sql()
-            .execute("DELETE FROM contacts WHERE id>9;", paramsv![])
+            .execute("DELETE FROM contacts WHERE id>9;", paramsx![])
             .await
             .unwrap();
         context
             .sql()
-            .execute("DELETE FROM chats WHERE id>9;", paramsv![])
+            .execute("DELETE FROM chats WHERE id>9;", paramsx![])
             .await
             .unwrap();
         context
             .sql()
-            .execute("DELETE FROM chats_contacts;", paramsv![])
+            .execute("DELETE FROM chats_contacts;", paramsx![])
             .await
             .unwrap();
         context
             .sql()
-            .execute("DELETE FROM msgs WHERE id>9;", paramsv![])
+            .execute("DELETE FROM msgs WHERE id>9;", paramsx![])
             .await
             .unwrap();
         context
             .sql()
             .execute(
                 "DELETE FROM config WHERE keyname LIKE 'imap.%' OR keyname LIKE 'configured%';",
-                paramsv![],
+                paramsx![],
             )
             .await
             .unwrap();
         context
             .sql()
-            .execute("DELETE FROM leftgrps;", paramsv![])
+            .execute("DELETE FROM leftgrps;", paramsx![])
             .await
             .unwrap();
         println!("(8) Rest but server config reset.");
@@ -118,7 +118,7 @@ async fn poke_spec(context: &Context, spec: Option<&str>) -> bool {
             .await
             .unwrap();
     } else {
-        let rs = context.sql().get_raw_config(context, "import_spec").await;
+        let rs = context.sql().get_raw_config("import_spec").await;
         if rs.is_none() {
             error!(context, "Import: No file or folder given.");
             return false;
