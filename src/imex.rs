@@ -5,6 +5,7 @@ use std::cmp::{max, min};
 use async_std::path::{Path, PathBuf};
 use async_std::prelude::*;
 use rand::{thread_rng, Rng};
+use sqlx::sqlite::SqliteQueryAs;
 
 use crate::blob::BlobObject;
 use crate::chat;
@@ -454,31 +455,23 @@ async fn import_backup(context: &Context, backup_to_import: impl AsRef<Path>) ->
         "***IMPORT-in-progress: total_files_cnt={:?}", total_files_cnt,
     );
 
-    let files = context
-        .sql
-        .query_map(
-            "SELECT file_name, file_content FROM backup_blobs ORDER BY id;",
-            paramsv![],
-            |row| {
-                let name: String = row.get(0)?;
-                let blob: Vec<u8> = row.get(1)?;
+    let pool = context.sql.get_pool().await?;
 
-                Ok((name, blob))
-            },
-            |files| {
-                files
-                    .collect::<std::result::Result<Vec<_>, _>>()
-                    .map_err(Into::into)
-            },
-        )
-        .await?;
+    let mut files = sqlx::query_as("SELECT file_name, file_content FROM backup_blobs ORDER BY id;")
+        .fetch(&pool);
 
     let mut all_files_extracted = true;
-    for (processed_files_cnt, (file_name, file_blob)) in files.into_iter().enumerate() {
+    let mut processed_files_cnt = 0;
+
+    while let Some(files_result) = files.next().await {
+        let (file_name, file_blob): (String, Vec<u8>) = files_result?;
+        processed_files_cnt += 1;
+
         if context.shall_stop_ongoing().await {
             all_files_extracted = false;
             break;
         }
+
         let mut permille = processed_files_cnt * 1000 / total_files_cnt;
         if permille < 10 {
             permille = 10
@@ -499,9 +492,14 @@ async fn import_backup(context: &Context, backup_to_import: impl AsRef<Path>) ->
         // only delete backup_blobs if all files were successfully extracted
         context
             .sql
-            .execute("DROP TABLE backup_blobs;", paramsx![])
+            .execute_batch(
+                r#"
+DROP TABLE backup_blobs;
+VACUUM;
+"#,
+            )
             .await?;
-        context.sql.execute("VACUUM;", paramsx![]).await.ok();
+
         Ok(())
     } else {
         bail!("received stop signal");
@@ -521,7 +519,7 @@ async fn export_backup(context: &Context, dir: impl AsRef<Path>) -> Result<()> {
     let dest_path_filename = dc_get_next_backup_path(dir, now).await?;
     let dest_path_string = dest_path_filename.to_string_lossy().to_string();
 
-    sql::housekeeping(context).await;
+    sql::housekeeping(context).await?;
 
     context.sql.execute("VACUUM;", paramsx![]).await.ok();
 
@@ -680,30 +678,19 @@ async fn import_self_keys(context: &Context, dir: impl AsRef<Path>) -> Result<()
 async fn export_self_keys(context: &Context, dir: impl AsRef<Path>) -> Result<()> {
     let mut export_errors = 0;
 
-    let keys = context
-        .sql
-        .query_map(
-            "SELECT id, public_key, private_key, is_default FROM keypairs;",
-            paramsv![],
-            |row| {
-                let id = row.get(0)?;
-                let public_key_blob: Vec<u8> = row.get(1)?;
-                let public_key = Key::from_slice(&public_key_blob, KeyType::Public);
-                let private_key_blob: Vec<u8> = row.get(2)?;
-                let private_key = Key::from_slice(&private_key_blob, KeyType::Private);
-                let is_default: i32 = row.get(3)?;
+    let pool = context.sql.get_pool().await?;
 
-                Ok((id, public_key, private_key, is_default))
-            },
-            |keys| {
-                keys.collect::<std::result::Result<Vec<_>, _>>()
-                    .map_err(Into::into)
-            },
-        )
-        .await?;
+    let mut keys = sqlx::query_as("SELECT id, public_key, private_key, is_default FROM keypairs;")
+        .fetch(&pool);
 
-    for (id, public_key, private_key, is_default) in keys {
+    while let Some(keys_result) = keys.next().await {
+        let (id, public_key_blob, private_key_blob, is_default): (i64, Vec<u8>, Vec<u8>, i32) =
+            keys_result?;
+        let public_key = Key::from_slice(&public_key_blob, KeyType::Public);
+        let private_key = Key::from_slice(&private_key_blob, KeyType::Private);
+
         let id = Some(id).filter(|_| is_default != 0);
+
         if let Ok(key) = public_key {
             if export_key_to_asc_file(context, &dir, id, &key)
                 .await
@@ -727,6 +714,7 @@ async fn export_self_keys(context: &Context, dir: impl AsRef<Path>) -> Result<()
     }
 
     ensure!(export_errors == 0, "errors while exporting keys");
+
     Ok(())
 }
 

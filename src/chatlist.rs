@@ -105,17 +105,6 @@ impl Chatlist {
 
         let mut add_archived_link_item = false;
 
-        let process_row = |row: &rusqlite::Row| {
-            let chat_id: ChatId = row.get(0)?;
-            let msg_id: MsgId = row.get(1).unwrap_or_default();
-            Ok((chat_id, msg_id))
-        };
-
-        let process_rows = |rows: rusqlite::MappedRows<_>| {
-            rows.collect::<std::result::Result<Vec<_>, _>>()
-                .map_err(Into::into)
-        };
-
         let skip_id = if flag_for_forwarding {
             chat::lookup_by_contact_id(context, DC_CONTACT_ID_DEVICE)
                 .await
@@ -142,7 +131,7 @@ impl Chatlist {
         // shown at all permanent in the chatlist.
         let mut ids = if let Some(query_contact_id) = query_contact_id {
             // show chats shared with a given contact
-            context.sql.query_map(
+            context.sql.query_rows(
                 "SELECT c.id, m.id
                  FROM chats c
                  LEFT JOIN msgs m
@@ -157,9 +146,7 @@ impl Chatlist {
                    AND c.id IN(SELECT chat_id FROM chats_contacts WHERE contact_id=?2)
                  GROUP BY c.id
                  ORDER BY c.archived=?3 DESC, IFNULL(m.timestamp,c.created_timestamp) DESC, m.id DESC;",
-                paramsv![MessageState::OutDraft, query_contact_id as i32, ChatVisibility::Pinned],
-                process_row,
-                process_rows,
+                paramsx![MessageState::OutDraft, query_contact_id as i32, ChatVisibility::Pinned],
             ).await?
         } else if flag_archived_only {
             // show archived chats
@@ -168,7 +155,7 @@ impl Chatlist {
             // and adapting the number requires larger refactorings and seems not to be worth the effort)
             context
                 .sql
-                .query_map(
+                .query_rows(
                     "SELECT c.id, m.id
                  FROM chats c
                  LEFT JOIN msgs m
@@ -183,9 +170,7 @@ impl Chatlist {
                    AND c.archived=1
                  GROUP BY c.id
                  ORDER BY IFNULL(m.timestamp,c.created_timestamp) DESC, m.id DESC;",
-                    paramsv![MessageState::OutDraft],
-                    process_row,
-                    process_rows,
+                    paramsx![MessageState::OutDraft],
                 )
                 .await?
         } else if let Some(query) = query {
@@ -201,7 +186,7 @@ impl Chatlist {
             let str_like_cmd = format!("%{}%", query);
             context
                 .sql
-                .query_map(
+                .query_rows(
                     "SELECT c.id, m.id
                  FROM chats c
                  LEFT JOIN msgs m
@@ -216,9 +201,7 @@ impl Chatlist {
                    AND c.name LIKE ?3
                  GROUP BY c.id
                  ORDER BY IFNULL(m.timestamp,c.created_timestamp) DESC, m.id DESC;",
-                    paramsv![MessageState::OutDraft, skip_id, str_like_cmd],
-                    process_row,
-                    process_rows,
+                    paramsx![MessageState::OutDraft, skip_id, str_like_cmd],
                 )
                 .await?
         } else {
@@ -231,7 +214,7 @@ impl Chatlist {
             } else {
                 ChatId::new(0)
             };
-            let mut ids = context.sql.query_map(
+            let mut ids = context.sql.query_rows(
                 "SELECT c.id, m.id
                  FROM chats c
                  LEFT JOIN msgs m
@@ -246,10 +229,9 @@ impl Chatlist {
                    AND NOT c.archived=?3
                  GROUP BY c.id
                  ORDER BY c.id=?4 DESC, c.archived=?5 DESC, IFNULL(m.timestamp,c.created_timestamp) DESC, m.id DESC;",
-                paramsv![MessageState::OutDraft, skip_id, ChatVisibility::Archived, sort_id_up, ChatVisibility::Pinned],
-                process_row,
-                process_rows,
+                paramsx![MessageState::OutDraft, skip_id, ChatVisibility::Archived, sort_id_up, ChatVisibility::Pinned],
             ).await?;
+
             if !flag_no_specials {
                 if let Some(last_deaddrop_fresh_msg_id) = get_last_deaddrop_fresh_msg(context).await
                 {

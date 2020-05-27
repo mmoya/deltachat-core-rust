@@ -8,7 +8,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use rusqlite::OpenFlags;
-use sqlx::Cursor;
+use sqlx::{sqlite::SqliteQueryAs, Cursor};
 
 use crate::chat::{update_device_icon, update_saved_messages_icon};
 use crate::constants::DC_CHAT_ID_TRASH;
@@ -142,9 +142,6 @@ impl Sql {
         Ok(tx)
     }
 
-    /// Prepares and executes the statement and maps a function over the resulting rows.
-    /// Then executes the second function over the returned iterator and returns the
-    /// result of that function.
     pub async fn query_map<T, F, G, H>(
         &self,
         sql: impl AsRef<str>,
@@ -158,20 +155,57 @@ impl Sql {
     {
         let sql = sql.as_ref();
 
-        let conn = self.get_conn().await?;
+        let lock = self.pool.read().await;
+        let pool = lock.as_ref().ok_or_else(|| Error::SqlNoConnection)?;
+        let conn = pool.get()?;
         let mut stmt = conn.prepare(sql)?;
         let res = stmt.query_map(&params, f)?;
         g(res)
     }
 
-    pub async fn get_conn(
+    /// Execute a query which is expected to return zero or more rows.
+    pub async fn query_rows<T, S: AsRef<str>>(
         &self,
-    ) -> Result<r2d2::PooledConnection<r2d2_sqlite::SqliteConnectionManager>> {
-        let lock = self.pool.read().await;
-        let pool = lock.as_ref().ok_or_else(|| Error::SqlNoConnection)?;
-        let conn = pool.get()?;
+        statement: S,
+        params: sqlx::sqlite::SqliteArguments,
+    ) -> Result<Vec<T>>
+    where
+        T: for<'a> sqlx::row::FromRow<'a, sqlx::sqlite::SqliteRow<'a>> + Unpin,
+    {
+        let lock = self.xpool.read().await;
+        let xpool = lock.as_ref().ok_or_else(|| Error::SqlNoConnection)?;
+        let rows = sqlx::query(statement.as_ref())
+            .bind_all(params)
+            .try_map(|row: sqlx::sqlite::SqliteRow<'_>| sqlx::FromRow::from_row(&row))
+            .fetch_all(xpool)
+            .await?;
 
-        Ok(conn)
+        Ok(rows)
+    }
+
+    /// Execute a query which is expected to return zero or more rows.
+    pub async fn query_values<T, S: AsRef<str>>(
+        &self,
+        statement: S,
+        params: sqlx::sqlite::SqliteArguments,
+    ) -> Result<Vec<T>>
+    where
+        T: for<'a> sqlx::decode::Decode<'a, sqlx::sqlite::Sqlite>,
+        T: sqlx::Type<sqlx::sqlite::Sqlite>,
+        T: 'static + Unpin,
+    {
+        let lock = self.xpool.read().await;
+        let xpool = lock.as_ref().ok_or_else(|| Error::SqlNoConnection)?;
+        let rows = sqlx::query(statement.as_ref())
+            .bind_all(params)
+            .try_map(|row: sqlx::sqlite::SqliteRow<'_>| {
+                let (val,): (T,) = sqlx::FromRow::from_row(&row)?;
+                Ok(val)
+            })
+            .fetch_all(xpool)
+            .await?;
+
+        Ok(rows)
     }
 
     /// Return `true` if a query in the SQL statement it executes returns one or more
@@ -206,12 +240,17 @@ impl Sql {
         params: sqlx::sqlite::SqliteArguments,
     ) -> Result<T>
     where
-        T: for<'a> sqlx::row::FromRow<'a, sqlx::sqlite::SqliteRow<'a>>,
+        T: for<'a> sqlx::row::FromRow<'a, sqlx::sqlite::SqliteRow<'a>> + Unpin,
     {
-        match self.query_row_optional(statement, params).await? {
-            Some(row) => Ok(row),
-            None => Err(sqlx::Error::RowNotFound.into()),
-        }
+        let lock = self.xpool.read().await;
+        let xpool = lock.as_ref().ok_or_else(|| Error::SqlNoConnection)?;
+        let row = sqlx::query(statement.as_ref())
+            .bind_all(params)
+            .try_map(|row: sqlx::sqlite::SqliteRow<'_>| sqlx::FromRow::from_row(&row))
+            .fetch_one(xpool)
+            .await?;
+
+        Ok(row)
     }
 
     /// Execute a query which is expected to return zero or one row.
@@ -221,22 +260,17 @@ impl Sql {
         params: sqlx::sqlite::SqliteArguments,
     ) -> Result<Option<T>>
     where
-        T: for<'a> sqlx::row::FromRow<'a, sqlx::sqlite::SqliteRow<'a>>,
+        T: for<'a> sqlx::row::FromRow<'a, sqlx::sqlite::SqliteRow<'a>> + Unpin,
     {
         let lock = self.xpool.read().await;
         let xpool = lock.as_ref().ok_or_else(|| Error::SqlNoConnection)?;
-        let mut rows = sqlx::query(statement.as_ref())
+        let row = sqlx::query(statement.as_ref())
             .bind_all(params)
-            .fetch(xpool);
+            .try_map(|row: sqlx::sqlite::SqliteRow<'_>| sqlx::FromRow::from_row(&row))
+            .fetch_optional(xpool)
+            .await?;
 
-        match rows.next().await {
-            Ok(Some(row)) => {
-                let val: T = sqlx::FromRow::from_row(&row)?;
-                Ok(Some(val))
-            }
-            Ok(None) => Ok(None),
-            Err(err) => Err(Error::from(err)),
-        }
+        Ok(row)
     }
 
     pub async fn query_value_optional<T, S: AsRef<str>>(
@@ -247,7 +281,7 @@ impl Sql {
     where
         T: for<'a> sqlx::decode::Decode<'a, sqlx::sqlite::Sqlite>,
         T: sqlx::Type<sqlx::sqlite::Sqlite>,
-        T: 'static,
+        T: 'static + Unpin,
     {
         match self.query_row_optional(statement, params).await? {
             Some((val,)) => Ok(Some(val)),
@@ -263,7 +297,7 @@ impl Sql {
     where
         T: for<'a> sqlx::decode::Decode<'a, sqlx::sqlite::Sqlite>,
         T: sqlx::Type<sqlx::sqlite::Sqlite>,
-        T: 'static,
+        T: 'static + Unpin,
     {
         let (val,): (T,) = self.query_row(statement, params).await?;
         Ok(val)
@@ -415,7 +449,7 @@ impl Sql {
     }
 }
 
-pub async fn housekeeping(context: &Context) {
+pub async fn housekeeping(context: &Context) -> Result<()> {
     let mut files_in_use = HashSet::new();
     let mut unreferenced_count = 0;
 
@@ -426,46 +460,36 @@ pub async fn housekeeping(context: &Context) {
         "SELECT param FROM msgs  WHERE chat_id!=3   AND type!=10;",
         Param::File,
     )
-    .await;
+    .await?;
     maybe_add_from_param(
         context,
         &mut files_in_use,
         "SELECT param FROM jobs;",
         Param::File,
     )
-    .await;
+    .await?;
     maybe_add_from_param(
         context,
         &mut files_in_use,
         "SELECT param FROM chats;",
         Param::ProfileImage,
     )
-    .await;
+    .await?;
     maybe_add_from_param(
         context,
         &mut files_in_use,
         "SELECT param FROM contacts;",
         Param::ProfileImage,
     )
-    .await;
+    .await?;
 
-    context
-        .sql
-        .query_map(
-            "SELECT value FROM config;",
-            paramsv![],
-            |row| row.get::<_, String>(0),
-            |rows| {
-                for row in rows {
-                    maybe_add_file(&mut files_in_use, row?);
-                }
-                Ok(())
-            },
-        )
-        .await
-        .unwrap_or_else(|err| {
-            warn!(context, "sql: failed query: {}", err);
-        });
+    let pool = context.sql.get_pool().await?;
+    let mut rows = sqlx::query_as("SELECT value FROM config;").fetch(&pool);
+
+    while let Some(row) = rows.next().await {
+        let (row,): (String,) = row?;
+        maybe_add_file(&mut files_in_use, row);
+    }
 
     info!(context, "{} files in use.", files_in_use.len(),);
     /* go through directory and delete unused files */
@@ -540,6 +564,8 @@ pub async fn housekeeping(context: &Context) {
     }
 
     info!(context, "Housekeeping done.",);
+
+    Ok(())
 }
 
 fn is_file_in_use(files_in_use: &HashSet<String>, namespc_opt: Option<&str>, name: &str) -> bool {
@@ -569,27 +595,20 @@ async fn maybe_add_from_param(
     files_in_use: &mut HashSet<String>,
     query: &str,
     param_id: Param,
-) {
-    context
-        .sql
-        .query_map(
-            query,
-            paramsv![],
-            |row| row.get::<_, String>(0),
-            |rows| {
-                for row in rows {
-                    let param: Params = row?.parse().unwrap_or_default();
-                    if let Some(file) = param.get(param_id) {
-                        maybe_add_file(files_in_use, file);
-                    }
-                }
-                Ok(())
-            },
-        )
-        .await
-        .unwrap_or_else(|err| {
-            warn!(context, "sql: failed to add_from_param: {}", err);
-        });
+) -> Result<()> {
+    let pool = context.sql.get_pool().await?;
+    let mut rows = sqlx::query_as(query).fetch(&pool);
+
+    while let Some(row) = rows.next().await {
+        let (row,): (String,) = row?;
+        let param: Params = row.parse().unwrap_or_default();
+
+        if let Some(file) = param.get(param_id) {
+            maybe_add_file(files_in_use, file);
+        }
+    }
+
+    Ok(())
 }
 
 #[allow(clippy::cognitive_complexity)]
@@ -693,25 +712,19 @@ async fn open(
 
         if recalc_fingerprints {
             info!(context, "[migration] recalc fingerprints");
-            let addrs = sql
-                .query_map(
-                    "SELECT addr FROM acpeerstates;",
-                    paramsv![],
-                    |row| row.get::<_, String>(0),
-                    |addrs| {
-                        addrs
-                            .collect::<std::result::Result<Vec<_>, _>>()
-                            .map_err(Into::into)
-                    },
-                )
-                .await?;
-            for addr in &addrs {
-                if let Some(ref mut peerstate) = Peerstate::from_addr(context, addr).await {
+            let pool = context.sql.get_pool().await?;
+            let mut rows = sqlx::query_as("SELECT addr FROM acpeerstates;").fetch(&pool);
+
+            while let Some(addr) = rows.next().await {
+                let (addr,): (String,) = addr?;
+
+                if let Some(ref mut peerstate) = Peerstate::from_addr(context, &addr).await {
                     peerstate.recalc_fingerprint();
                     peerstate.save_to_db(sql, false).await?;
                 }
             }
         }
+
         if update_icons {
             update_saved_messages_icon(context).await?;
             update_device_icon(context).await?;

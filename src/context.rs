@@ -358,30 +358,22 @@ impl Context {
     pub async fn get_fresh_msgs(&self) -> Vec<MsgId> {
         let show_deaddrop: i32 = 0;
         self.sql
-            .query_map(
-                concat!(
-                    "SELECT m.id",
-                    " FROM msgs m",
-                    " LEFT JOIN contacts ct",
-                    "        ON m.from_id=ct.id",
-                    " LEFT JOIN chats c",
-                    "        ON m.chat_id=c.id",
-                    " WHERE m.state=?",
-                    "   AND m.hidden=0",
-                    "   AND m.chat_id>?",
-                    "   AND ct.blocked=0",
-                    "   AND (c.blocked=0 OR c.blocked=?)",
-                    " ORDER BY m.timestamp DESC,m.id DESC;"
-                ),
-                paramsv![10, 9, if 0 != show_deaddrop { 2 } else { 0 }],
-                |row| row.get::<_, MsgId>(0),
-                |rows| {
-                    let mut ret = Vec::new();
-                    for row in rows {
-                        ret.push(row?);
-                    }
-                    Ok(ret)
-                },
+            .query_values(
+                r#"
+SELECT m.id
+ FROM msgs m
+ LEFT JOIN contacts ct
+        ON m.from_id=ct.id
+ LEFT JOIN chats c
+        ON m.chat_id=c.id
+ WHERE m.state=?
+   AND m.hidden=0
+   AND m.chat_id>?
+   AND ct.blocked=0
+   AND (c.blocked=0 OR c.blocked=?)
+ ORDER BY m.timestamp DESC,m.id DESC;
+"#,
+                paramsx![10, 9, if 0 != show_deaddrop { 2 } else { 0 }],
             )
             .await
             .unwrap_or_default()
@@ -397,47 +389,36 @@ impl Context {
         let strLikeBeg = format!("{}%", real_query);
 
         let query = if !chat_id.is_unset() {
-            concat!(
-                "SELECT m.id AS id, m.timestamp AS timestamp",
-                " FROM msgs m",
-                " LEFT JOIN contacts ct",
-                "        ON m.from_id=ct.id",
-                " WHERE m.chat_id=?",
-                "   AND m.hidden=0",
-                "   AND ct.blocked=0",
-                "   AND (txt LIKE ? OR ct.name LIKE ?)",
-                " ORDER BY m.timestamp,m.id;"
-            )
+            r#"
+SELECT m.id
+ FROM msgs 
+ LEFT JOIN contacts ct
+        ON m.from_id=ct.id
+ WHERE m.chat_id=?
+   AND m.hidden=0
+   AND ct.blocked=0
+   AND (txt LIKE ? OR ct.name LIKE ?)
+ ORDER BY m.timestamp,m.id;
+"#
         } else {
-            concat!(
-                "SELECT m.id AS id, m.timestamp AS timestamp",
-                " FROM msgs m",
-                " LEFT JOIN contacts ct",
-                "        ON m.from_id=ct.id",
-                " LEFT JOIN chats c",
-                "        ON m.chat_id=c.id",
-                " WHERE m.chat_id>9",
-                "   AND m.hidden=0",
-                "   AND (c.blocked=0 OR c.blocked=?)",
-                "   AND ct.blocked=0",
-                "   AND (m.txt LIKE ? OR ct.name LIKE ?)",
-                " ORDER BY m.timestamp DESC,m.id DESC;"
-            )
+            r#"
+SELECT m.id
+ FROM msgs m
+ LEFT JOIN contacts ct
+        ON m.from_id=ct.id
+ LEFT JOIN chats c
+        ON m.chat_id=c.id
+ WHERE m.chat_id>9
+   AND m.hidden=0
+   AND (c.blocked=0 OR c.blocked=?)
+   AND ct.blocked=0
+   AND (m.txt LIKE ? OR ct.name LIKE ?)
+ ORDER BY m.timestamp DESC,m.id DESC;
+"#
         };
 
         self.sql
-            .query_map(
-                query,
-                paramsv![chat_id, strLikeInText, strLikeBeg],
-                |row| row.get::<_, MsgId>("id"),
-                |rows| {
-                    let mut ret = Vec::new();
-                    for id in rows {
-                        ret.push(id?);
-                    }
-                    Ok(ret)
-                },
-            )
+            .query_values(query, paramsx![chat_id, strLikeInText, strLikeBeg])
             .await
             .unwrap_or_default()
     }

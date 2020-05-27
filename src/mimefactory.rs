@@ -1,5 +1,7 @@
+use async_std::prelude::*;
 use chrono::TimeZone;
 use lettre_email::{mime, Address, Header, MimeMultipartType, PartBuilder};
+use sqlx::sqlite::SqliteQueryAs;
 
 use crate::blob::BlobObject;
 use crate::chat::{self, Chat};
@@ -87,30 +89,26 @@ impl<'a, 'b> MimeFactory<'a, 'b> {
         if chat.is_self_talk() {
             recipients.push((from_displayname.to_string(), from_addr.to_string()));
         } else {
-            context
-                .sql
-                .query_map(
-                    "SELECT c.authname, c.addr  \
-                 FROM chats_contacts cc  \
-                 LEFT JOIN contacts c ON cc.contact_id=c.id  \
-                 WHERE cc.chat_id=? AND cc.contact_id>9;",
-                    paramsv![msg.chat_id],
-                    |row| {
-                        let authname: String = row.get(0)?;
-                        let addr: String = row.get(1)?;
-                        Ok((authname, addr))
-                    },
-                    |rows| {
-                        for row in rows {
-                            let (authname, addr) = row?;
-                            if !recipients_contain_addr(&recipients, &addr) {
-                                recipients.push((authname, addr));
-                            }
-                        }
-                        Ok(())
-                    },
-                )
-                .await?;
+            let pool = context.sql.get_pool().await?;
+
+            let mut rows = sqlx::query_as(
+                r#"
+SELECT c.authname, c.addr
+  FROM chats_contacts cc
+  LEFT JOIN contacts c ON cc.contact_id=c.id
+    WHERE cc.chat_id=? AND cc.contact_id>9;
+"#,
+            )
+            .bind(msg.chat_id)
+            .fetch(&pool);
+
+            while let Some(row) = rows.next().await {
+                let (authname, addr): (String, String) = row?;
+
+                if !recipients_contain_addr(&recipients, &addr) {
+                    recipients.push((authname, addr));
+                }
+            }
 
             let command = msg.param.get_cmd();
 

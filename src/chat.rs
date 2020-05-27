@@ -416,7 +416,7 @@ UPDATE contacts
 
     async fn parent_query<T>(self, context: &Context, fields: &str) -> sql::Result<Option<T>>
     where
-        T: for<'a> sqlx::row::FromRow<'a, sqlx::sqlite::SqliteRow<'a>>,
+        T: for<'a> sqlx::row::FromRow<'a, sqlx::sqlite::SqliteRow<'a>> + Unpin,
     {
         let sql = &context.sql;
         let query = format!(

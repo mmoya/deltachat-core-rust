@@ -1,9 +1,11 @@
 //! # Messages and their identifiers
 
 use async_std::path::{Path, PathBuf};
+use async_std::prelude::*;
 use deltachat_derive::{FromSql, Sqlx, ToSql};
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
+use sqlx::sqlite::SqliteQueryAs;
 
 use crate::chat::{self, Chat, ChatId};
 use crate::constants::*;
@@ -860,26 +862,16 @@ impl Lot {
     }
 }
 
-pub async fn get_msg_info(context: &Context, msg_id: MsgId) -> String {
+pub async fn get_msg_info(context: &Context, msg_id: MsgId) -> Result<String, Error> {
     let mut ret = String::new();
 
-    let msg = Message::load_from_db(context, msg_id).await;
-    if msg.is_err() {
-        return ret;
-    }
-
-    let msg = msg.unwrap_or_default();
+    let msg = Message::load_from_db(context, msg_id).await?;
 
     let rawtxt: Option<String> = context
         .sql
         .query_value("SELECT txt_raw FROM msgs WHERE id=?;", paramsx![msg_id])
-        .await
-        .ok();
+        .await?;
 
-    if rawtxt.is_none() {
-        ret += &format!("Cannot load message {}.", msg_id);
-        return ret;
-    }
     let rawtxt = rawtxt.unwrap_or_default();
     let rawtxt = dc_truncate(rawtxt.trim(), 100_000);
 
@@ -888,8 +880,7 @@ pub async fn get_msg_info(context: &Context, msg_id: MsgId) -> String {
 
     let name = Contact::load_from_db(context, msg.from_id)
         .await
-        .map(|contact| contact.get_name_n_addr())
-        .unwrap_or_default();
+        .map(|contact| contact.get_name_n_addr())?;
 
     ret += &format!(" by {}", name);
     ret += "\n";
@@ -906,35 +897,28 @@ pub async fn get_msg_info(context: &Context, msg_id: MsgId) -> String {
 
     if msg.from_id == DC_CONTACT_ID_INFO || msg.to_id == DC_CONTACT_ID_INFO {
         // device-internal message, no further details needed
-        return ret;
+        return Ok(ret);
     }
 
-    if let Ok(rows) = context
-        .sql
-        .query_map(
-            "SELECT contact_id, timestamp_sent FROM msgs_mdns WHERE msg_id=?;",
-            paramsv![msg_id],
-            |row| {
-                let contact_id: i32 = row.get(0)?;
-                let ts: i64 = row.get(1)?;
-                Ok((contact_id, ts))
-            },
-            |rows| rows.collect::<Result<Vec<_>, _>>().map_err(Into::into),
-        )
-        .await
-    {
-        for (contact_id, ts) in rows {
-            let fts = dc_timestamp_to_str(ts);
-            ret += &format!("Read: {}", fts);
+    let pool = context.sql.get_pool().await?;
 
-            let name = Contact::load_from_db(context, contact_id as u32)
-                .await
-                .map(|contact| contact.get_name_n_addr())
-                .unwrap_or_default();
+    let mut rows =
+        sqlx::query_as("SELECT contact_id, timestamp_sent FROM msgs_mdns WHERE msg_id=?;")
+            .bind(msg_id)
+            .fetch(&pool);
 
-            ret += &format!(" by {}", name);
-            ret += "\n";
-        }
+    while let Some(row) = rows.next().await {
+        let (contact_id, ts): (i32, i64) = row?;
+
+        let fts = dc_timestamp_to_str(ts);
+        ret += &format!("Read: {}", fts);
+
+        let name = Contact::load_from_db(context, contact_id as u32)
+            .await
+            .map(|contact| contact.get_name_n_addr())?;
+
+        ret += &format!(" by {}", name);
+        ret += "\n";
     }
 
     ret += &format!("State: {}", msg.state);
@@ -990,7 +974,7 @@ pub async fn get_msg_info(context: &Context, msg_id: MsgId) -> String {
         }
     }
 
-    ret
+    Ok(ret)
 }
 
 pub fn guess_msgtype_from_suffix(path: &Path) -> Option<(Viewtype, &str)> {

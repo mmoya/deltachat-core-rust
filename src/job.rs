@@ -6,13 +6,14 @@
 use std::fmt;
 use std::future::Future;
 
-use deltachat_derive::*;
-use itertools::Itertools;
-use rand::{thread_rng, Rng};
-
 use async_smtp::smtp::response::Category;
 use async_smtp::smtp::response::Code;
 use async_smtp::smtp::response::Detail;
+use async_std::prelude::*;
+use deltachat_derive::*;
+use itertools::Itertools;
+use rand::{thread_rng, Rng};
+use sqlx::sqlite::SqliteQueryAs;
 
 use crate::blob::BlobObject;
 use crate::chat::{self, ChatId};
@@ -417,40 +418,32 @@ impl Job {
         context: &Context,
         contact_id: u32,
     ) -> sql::Result<(Vec<u32>, Vec<String>)> {
-        // Extract message IDs from job parameters
-        let res: Vec<(u32, MsgId)> = context
-            .sql
-            .query_map(
-                "SELECT id, param FROM jobs WHERE foreign_id=? AND id!=?",
-                paramsv![contact_id, self.job_id],
-                |row| {
-                    let job_id: u32 = row.get(0)?;
-                    let params_str: String = row.get(1)?;
-                    let params: Params = params_str.parse().unwrap_or_default();
-                    Ok((job_id, params))
-                },
-                |jobs| {
-                    let res = jobs
-                        .filter_map(|row| {
-                            let (job_id, params) = row.ok()?;
-                            let msg_id = params.get_msg_id()?;
-                            Some((job_id, msg_id))
-                        })
-                        .collect();
-                    Ok(res)
-                },
-            )
-            .await?;
-
-        // Load corresponding RFC724 message IDs
         let mut job_ids = Vec::new();
         let mut rfc724_mids = Vec::new();
-        for (job_id, msg_id) in res {
-            if let Ok(Message { rfc724_mid, .. }) = Message::load_from_db(context, msg_id).await {
-                job_ids.push(job_id);
-                rfc724_mids.push(rfc724_mid);
+
+        let pool = context.sql.get_pool().await?;
+
+        let mut rows = sqlx::query_as("SELECT id, param FROM jobs WHERE foreign_id=? AND id!=?")
+            .bind(contact_id as i64)
+            .bind(self.job_id as i64)
+            .fetch(&pool);
+
+        while let Some(row) = rows.next().await {
+            let (job_id, params): (i64, String) = row?;
+            let params: Params = params.parse().unwrap_or_default();
+            let msg_id = params.get_msg_id().unwrap_or_default();
+
+            match Message::load_from_db(context, msg_id).await {
+                Ok(Message { rfc724_mid, .. }) => {
+                    job_ids.push(job_id as u32);
+                    rfc724_mids.push(rfc724_mid);
+                }
+                Err(err) => {
+                    warn!(context, "failed to load mdn job message: {}", err);
+                }
             }
         }
+
         Ok((job_ids, rfc724_mids))
     }
 
@@ -986,7 +979,9 @@ async fn perform_job_action(
         Action::MarkseenMsgOnImap => job.markseen_msg_on_imap(context, connection.inbox()).await,
         Action::MoveMsg => job.move_msg(context, connection.inbox()).await,
         Action::Housekeeping => {
-            sql::housekeeping(context).await;
+            if let Err(err) = sql::housekeeping(context).await {
+                error!(context, "housekeeping failed: {}", err);
+            }
             Status::Finished(Ok(()))
         }
     };
