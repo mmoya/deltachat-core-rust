@@ -1073,56 +1073,40 @@ pub async fn markseen_msgs(context: &Context, msg_ids: Vec<MsgId>) -> bool {
         return false;
     }
 
-    let msgs = context
-        .sql
-        .with_conn(move |conn| {
-            let mut stmt = conn.prepare_cached(concat!(
-                "SELECT",
-                "    m.state AS state,",
-                "    c.blocked AS blocked",
-                " FROM msgs m LEFT JOIN chats c ON c.id=m.chat_id",
-                " WHERE m.id=? AND m.chat_id>9"
-            ))?;
-
-            let mut msgs = Vec::with_capacity(msg_ids.len());
-            for id in msg_ids.into_iter() {
-                let query_res = stmt.query_row(paramsv![id], |row| {
-                    Ok((
-                        row.get::<_, MessageState>("state")?,
-                        row.get::<_, Option<Blocked>>("blocked")?
-                            .unwrap_or_default(),
-                    ))
-                });
-                if let Err(rusqlite::Error::QueryReturnedNoRows) = query_res {
-                    continue;
-                }
-                let (state, blocked) = query_res.map_err(Into::<anyhow::Error>::into)?;
-                msgs.push((id, state, blocked));
-            }
-
-            Ok(msgs)
-        })
-        .await
-        .unwrap_or_default();
-
     let mut send_event = false;
+    for id in msg_ids.into_iter() {
+        let query_res: Result<Option<(MessageState, Option<Blocked>)>, _> = context
+            .sql
+            .query_row_optional(
+                r#"
+SELECT
+    m.state
+    c.blocked
+ FROM msgs m LEFT JOIN chats c ON c.id = m.chat_id
+ WHERE m.id = ? AND m.chat_id > 9
+"#,
+                paramsx![id],
+            )
+            .await;
 
-    for (id, curr_state, curr_blocked) in msgs.into_iter() {
-        if curr_blocked == Blocked::Not {
-            if curr_state == MessageState::InFresh || curr_state == MessageState::InNoticed {
-                update_msg_state(context, id, MessageState::InSeen).await;
-                info!(context, "Seen message {}.", id);
+        if let Ok(Some((state, blocked))) = query_res {
+            let blocked = blocked.unwrap_or_default();
+            if blocked == Blocked::Not {
+                if state == MessageState::InFresh || state == MessageState::InNoticed {
+                    update_msg_state(context, id, MessageState::InSeen).await;
+                    info!(context, "Seen message {}.", id);
 
-                job::add(
-                    context,
-                    job::Job::new(Action::MarkseenMsgOnImap, id.to_u32(), Params::new(), 0),
-                )
-                .await;
+                    job::add(
+                        context,
+                        job::Job::new(Action::MarkseenMsgOnImap, id.to_u32(), Params::new(), 0),
+                    )
+                    .await;
+                    send_event = true;
+                }
+            } else if state == MessageState::InFresh {
+                update_msg_state(context, id, MessageState::InNoticed).await;
                 send_event = true;
             }
-        } else if curr_state == MessageState::InFresh {
-            update_msg_state(context, id, MessageState::InNoticed).await;
-            send_event = true;
         }
     }
 
@@ -1151,17 +1135,22 @@ pub async fn star_msgs(context: &Context, msg_ids: Vec<MsgId>, star: bool) -> bo
     if msg_ids.is_empty() {
         return false;
     }
-    context
-        .sql
-        .with_conn(move |conn| {
-            let mut stmt = conn.prepare("UPDATE msgs SET starred=? WHERE id=?;")?;
-            for msg_id in msg_ids.into_iter() {
-                stmt.execute(paramsv![star as i32, msg_id])?;
-            }
-            Ok(())
-        })
-        .await
-        .is_ok()
+
+    for msg_id in msg_ids.into_iter() {
+        if context
+            .sql
+            .execute(
+                "UPDATE msgs SET starred=? WHERE id=?;",
+                paramsx![star as i32, msg_id],
+            )
+            .await
+            .is_err()
+        {
+            return false;
+        }
+    }
+
+    true
 }
 
 /// Returns a summary test.

@@ -634,9 +634,6 @@ async fn add_parts(
     let icnt = mime_parser.parts.len();
 
     let subject = mime_parser.get_subject().unwrap_or_default();
-
-    let mut parts = std::mem::replace(&mut mime_parser.parts, Vec::new());
-    let server_folder = server_folder.as_ref().to_string();
     let location_kml_is = mime_parser.location_kml.is_some();
     let is_system_message = mime_parser.is_system_message;
     let mime_headers = if save_mime_headers {
@@ -645,51 +642,43 @@ async fn add_parts(
         None
     };
     let sent_timestamp = *sent_timestamp;
-    let is_hidden = *hidden;
     let chat_id = *chat_id;
     let is_mdn = !mime_parser.reports.is_empty();
 
-    // TODO: can this clone be avoided?
-    let rfc724_mid = rfc724_mid.to_string();
+    for part in &mut mime_parser.parts {
+        let mut txt_raw = "".to_string();
 
-    let (new_parts, ids, is_hidden) = context
-        .sql
-        .with_conn(move |mut conn| {
-            let mut ids = Vec::with_capacity(parts.len());
-            let mut is_hidden = is_hidden;
+        let is_location_kml =
+            location_kml_is && icnt == 1 && (part.msg == "-location-" || part.msg.is_empty());
 
-            for part in &mut parts {
-                let mut txt_raw = "".to_string();
-                let mut stmt = conn.prepare_cached(
-                    "INSERT INTO msgs \
-         (rfc724_mid, server_folder, server_uid, chat_id, from_id, to_id, timestamp, \
-         timestamp_sent, timestamp_rcvd, type, state, msgrmsg,  txt, txt_raw, param, \
-         bytes, hidden, mime_headers,  mime_in_reply_to, mime_references) \
-         VALUES (?,?,?,?,?,?, ?,?,?,?,?,?, ?,?,?,?,?,?, ?,?);",
-                )?;
+        if is_mdn || is_location_kml {
+            *hidden = true;
+            if state == MessageState::InFresh {
+                state = MessageState::InNoticed;
+            }
+        }
 
-                let is_location_kml = location_kml_is
-                    && icnt == 1
-                    && (part.msg == "-location-" || part.msg.is_empty());
+        if part.typ == Viewtype::Text {
+            let msg_raw = part.msg_raw.as_ref().cloned().unwrap_or_default();
+            txt_raw = format!("{}\n\n{}", subject, msg_raw);
+        }
+        if is_system_message != SystemMessage::Unknown {
+            part.param.set_int(Param::Cmd, is_system_message as i32);
+        }
 
-                if is_mdn || is_location_kml {
-                    is_hidden = true;
-                    if state == MessageState::InFresh {
-                        state = MessageState::InNoticed;
-                    }
-                }
-
-                if part.typ == Viewtype::Text {
-                    let msg_raw = part.msg_raw.as_ref().cloned().unwrap_or_default();
-                    txt_raw = format!("{}\n\n{}", subject, msg_raw);
-                }
-                if is_system_message != SystemMessage::Unknown {
-                    part.param.set_int(Param::Cmd, is_system_message as i32);
-                }
-
-                stmt.execute(paramsv![
+        context
+            .sql
+            .execute(
+                r#"
+INSERT INTO msgs (
+    rfc724_mid, server_folder, server_uid, chat_id, from_id, to_id, timestamp,
+    timestamp_sent, timestamp_rcvd, type, state, msgrmsg,  txt, txt_raw, param,
+    bytes, hidden, mime_headers,  mime_in_reply_to, mime_references)
+  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);
+"#,
+                paramsx![
                     rfc724_mid,
-                    server_folder,
+                    server_folder.as_ref(),
                     server_uid as i32,
                     chat_id,
                     from_id as i32,
@@ -700,36 +689,29 @@ async fn add_parts(
                     part.typ,
                     state,
                     msgrmsg,
-                    part.msg,
+                    &part.msg,
                     // txt_raw might contain invalid utf8
                     txt_raw,
                     part.param.to_string(),
-                    part.bytes as isize,
-                    is_hidden,
-                    mime_headers,
-                    mime_in_reply_to,
-                    mime_references,
-                ])?;
+                    part.bytes as i64,
+                    *hidden,
+                    &mime_headers,
+                    &mime_in_reply_to,
+                    &mime_references,
+                ],
+            )
+            .await?;
 
-                drop(stmt);
-                ids.push(MsgId::new(crate::sql::get_rowid(
-                    &mut conn,
-                    "msgs",
-                    "rfc724_mid",
-                    &rfc724_mid,
-                )?));
-            }
-            Ok((parts, ids, is_hidden))
-        })
-        .await?;
+        let msg_id = MsgId::new(
+            context
+                .sql
+                .get_rowid(context, "msgs", "rfc724_mid", &rfc724_mid)
+                .await?,
+        );
 
-    if let Some(id) = ids.iter().last() {
-        *insert_msg_id = *id;
+        *insert_msg_id = msg_id;
+        created_db_entries.push((chat_id, msg_id));
     }
-
-    *hidden = is_hidden;
-    created_db_entries.extend(ids.iter().map(|id| (chat_id, *id)));
-    mime_parser.parts = new_parts;
 
     info!(
         context,

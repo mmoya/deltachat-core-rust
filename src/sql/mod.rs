@@ -128,6 +128,17 @@ impl Sql {
         lock.as_ref().cloned().ok_or_else(|| Error::SqlNoConnection)
     }
 
+    /// Starts a new transaction.
+    pub async fn begin(
+        &self,
+    ) -> Result<sqlx::Transaction<sqlx::pool::PoolConnection<sqlx::sqlite::SqliteConnection>>> {
+        let lock = self.xpool.read().await;
+        let pool = lock.as_ref().ok_or_else(|| Error::SqlNoConnection)?;
+
+        let tx = pool.begin().await?;
+        Ok(tx)
+    }
+
     /// Prepares and executes the statement and maps a function over the resulting rows.
     /// Then executes the second function over the returned iterator and returns the
     /// result of that function.
@@ -160,32 +171,6 @@ impl Sql {
         Ok(conn)
     }
 
-    pub async fn with_conn<G, H>(&self, g: G) -> Result<H>
-    where
-        H: Send + 'static,
-        G: Send
-            + 'static
-            + FnOnce(r2d2::PooledConnection<r2d2_sqlite::SqliteConnectionManager>) -> Result<H>,
-    {
-        let lock = self.pool.read().await;
-        let pool = lock.as_ref().ok_or_else(|| Error::SqlNoConnection)?;
-        let conn = pool.get()?;
-
-        g(conn)
-    }
-
-    pub async fn with_conn_async<G, H, Fut>(&self, mut g: G) -> Result<H>
-    where
-        G: FnMut(r2d2::PooledConnection<r2d2_sqlite::SqliteConnectionManager>) -> Fut,
-        Fut: Future<Output = Result<H>> + Send,
-    {
-        let lock = self.pool.read().await;
-        let pool = lock.as_ref().ok_or_else(|| Error::SqlNoConnection)?;
-
-        let conn = pool.get()?;
-        g(conn).await
-    }
-
     /// Return `true` if a query in the SQL statement it executes returns one or more
     /// rows and false if the SQL returns an empty set.
     pub async fn exists(&self, sql: &str, params: Vec<&dyn crate::ToSql>) -> Result<bool> {
@@ -199,9 +184,9 @@ impl Sql {
     }
 
     /// Execute a query which is expected to return one row.
-    pub async fn query_row<T>(
+    pub async fn query_row<T, S: AsRef<str>>(
         &self,
-        statement: impl AsRef<str>,
+        statement: S,
         params: sqlx::sqlite::SqliteArguments,
     ) -> Result<T>
     where
@@ -214,9 +199,9 @@ impl Sql {
     }
 
     /// Execute a query which is expected to return zero or one row.
-    pub async fn query_row_optional<T>(
+    pub async fn query_row_optional<T, S: AsRef<str>>(
         &self,
-        statement: impl AsRef<str>,
+        statement: S,
         params: sqlx::sqlite::SqliteArguments,
     ) -> Result<Option<T>>
     where
@@ -238,9 +223,9 @@ impl Sql {
         }
     }
 
-    pub async fn query_value_optional<T>(
+    pub async fn query_value_optional<T, S: AsRef<str>>(
         &self,
-        statement: impl AsRef<str>,
+        statement: S,
         params: sqlx::sqlite::SqliteArguments,
     ) -> Result<Option<T>>
     where
@@ -254,9 +239,9 @@ impl Sql {
         }
     }
 
-    pub async fn query_value<T>(
+    pub async fn query_value<T, S: AsRef<str>>(
         &self,
-        statement: impl AsRef<str>,
+        statement: S,
         params: sqlx::sqlite::SqliteArguments,
     ) -> Result<T>
     where
@@ -269,18 +254,15 @@ impl Sql {
     }
 
     pub async fn table_exists(&self, name: impl AsRef<str>) -> Result<bool> {
-        let name = name.as_ref().to_string();
-        self.with_conn(move |conn| {
-            let mut exists = false;
-            conn.pragma(None, "table_info", &name, |_row| {
-                // will only be executed if the info was found
-                exists = true;
-                Ok(())
-            })?;
+        let exists = self
+            .query_row_optional::<(String,), _>(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name=?",
+                paramsx![name.as_ref()],
+            )
+            .await?
+            .is_some();
 
-            Ok(exists)
-        })
-        .await
+        Ok(exists)
     }
 
     /// Set private configuration options.

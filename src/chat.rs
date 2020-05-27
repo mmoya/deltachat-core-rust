@@ -30,7 +30,20 @@ use crate::stock::StockMessage;
 /// Some chat IDs are reserved to identify special chat types.  This
 /// type can represent both the special as well as normal chats.
 #[derive(
-    Debug, Copy, Clone, Default, PartialEq, Eq, Serialize, Deserialize, Hash, PartialOrd, Ord,
+    Debug,
+    Copy,
+    Clone,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    Hash,
+    PartialOrd,
+    Ord,
+    FromPrimitive,
+    ToPrimitive,
+    Sqlx,
 )]
 pub struct ChatId(u32);
 
@@ -474,31 +487,6 @@ impl std::fmt::Display for ChatId {
     }
 }
 
-impl sqlx::encode::Encode<sqlx::sqlite::Sqlite> for ChatId {
-    fn encode(&self, buf: &mut Vec<sqlx::sqlite::SqliteArgumentValue>) {
-        (self.0 as i64).encode(buf)
-    }
-}
-
-impl<'de> sqlx::decode::Decode<'de, sqlx::sqlite::Sqlite> for ChatId {
-    fn decode(value: sqlx::sqlite::SqliteValue<'de>) -> sqlx::Result<Self> {
-        let raw: i64 = sqlx::decode::Decode::decode(value)?;
-        if 0 <= raw && raw <= std::u32::MAX as i64 {
-            Ok(ChatId::new(raw as u32))
-        } else {
-            Err(sqlx::Error::Decode(
-                anyhow::anyhow!("chat id out of range").into(),
-            ))
-        }
-    }
-}
-
-impl sqlx::types::Type<sqlx::sqlite::Sqlite> for ChatId {
-    fn type_info() -> sqlx::sqlite::SqliteTypeInfo {
-        <i64 as sqlx::Type<_>>::type_info()
-    }
-}
-
 /// Allow converting [ChatId] to an SQLite type.
 ///
 /// This allows you to directly store [ChatId] into the database as
@@ -546,18 +534,18 @@ impl<'a> sqlx::FromRow<'a, sqlx::sqlite::SqliteRow<'a>> for Chat {
         use sqlx::Row;
 
         let c = Chat {
-            id: row.try_get("id")?,
-            typ: row.try_get("typ")?,
+            id: row.try_get("id").unwrap_or_default(),
+            typ: row.try_get("type")?,
             name: row.try_get::<String, _>("name")?,
             grpid: row.try_get::<String, _>("grpid")?,
             param: row
                 .try_get::<String, _>("param")?
                 .parse()
                 .unwrap_or_default(),
-            visibility: row.try_get("visibility")?,
+            visibility: row.try_get("archived")?,
             blocked: row.try_get::<Option<_>, _>("blocked")?.unwrap_or_default(),
-            is_sending_locations: row.try_get("is_sending_locations")?,
-            mute_duration: row.try_get("mute_duration")?,
+            is_sending_locations: row.try_get("locations_send_until")?,
+            mute_duration: row.try_get("muted_until")?,
         };
 
         Ok(c)
@@ -1257,35 +1245,31 @@ pub(crate) async fn create_or_lookup_by_contact_id(
     let contact = Contact::load_from_db(context, contact_id).await?;
     let chat_name = contact.get_display_name().to_string();
 
-    context
-        .sql
-        .with_conn(move |mut conn| {
-            let conn2 = &mut conn;
-            let tx = conn2.transaction()?;
-            tx.execute(
-                "INSERT INTO chats (type, name, param, blocked, created_timestamp) VALUES(?, ?, ?, ?, ?)",
-                params![
-                    Chattype::Single,
-                    chat_name,
-                    match contact_id {
-                        DC_CONTACT_ID_SELF => "K=1".to_string(), // K = Param::Selftalk
-                        DC_CONTACT_ID_DEVICE => "D=1".to_string(), // D = Param::Devicetalk
-                        _ => "".to_string(),
-                    },
-                    create_blocked as u8,
-                    time(),
-                ],
-            )?;
+    let mut tx = context.sql.begin().await?;
+    sqlx::query(
+        "INSERT INTO chats (type, name, param, blocked, created_timestamp) VALUES(?, ?, ?, ?, ?)",
+    )
+    .bind_all(paramsx![
+        Chattype::Single,
+        chat_name,
+        match contact_id {
+            DC_CONTACT_ID_SELF => "K=1".to_string(), // K = Param::Selftalk
+            DC_CONTACT_ID_DEVICE => "D=1".to_string(), // D = Param::Devicetalk
+            _ => "".to_string(),
+        },
+        create_blocked as i32,
+        time(),
+    ])
+    .execute(&mut tx)
+    .await?;
 
-            tx.execute(
-                "INSERT INTO chats_contacts (chat_id, contact_id) VALUES((SELECT last_insert_rowid()), ?)",
-                params![contact_id],
-            )?;
-
-            tx.commit()?;
-            Ok(())
-        })
-        .await?;
+    sqlx::query(
+        "INSERT INTO chats_contacts (chat_id, contact_id) VALUES ( (SELECT last_insert_rowid() ), ?)",
+    )
+    .bind(contact_id as i64)
+    .execute(&mut tx)
+    .await?;
+    tx.commit().await?;
 
     if contact_id == DC_CONTACT_ID_SELF {
         update_saved_messages_icon(context).await?;
@@ -1315,6 +1299,7 @@ pub(crate) async fn lookup_by_contact_id(
             paramsx![contact_id as i32],
         )
         .await
+        .map(|(id, blocked): (ChatId, Option<Blocked>)| (id, blocked.unwrap_or_default()))
         .map_err(Into::into)
 }
 
@@ -2203,10 +2188,12 @@ pub(crate) async fn shall_attach_selfavatar(
     let needs_attach = context
         .sql
         .query_map(
-            "SELECT c.selfavatar_sent
-           FROM chats_contacts cc
-           LEFT JOIN contacts c ON c.id=cc.contact_id
-          WHERE cc.chat_id=? AND cc.contact_id!=?;",
+            r#"
+SELECT c.selfavatar_sent
+  FROM chats_contacts cc
+  LEFT JOIN contacts c ON c.id=cc.contact_id
+  WHERE cc.chat_id=? AND cc.contact_id!=?;
+"#,
             paramsv![chat_id, DC_CONTACT_ID_SELF],
             |row| Ok(row.get::<_, i64>(0)),
             |rows| {
@@ -2744,21 +2731,26 @@ pub async fn add_device_msg(
         prepare_msg_blob(context, msg).await?;
         chat_id.unarchive(context).await?;
 
-        context.sql.execute(
-            "INSERT INTO msgs (chat_id,from_id,to_id, timestamp,type,state, txt,param,rfc724_mid) \
-             VALUES (?,?,?, ?,?,?, ?,?,?);",
-            paramsx![
-                chat_id,
-                DC_CONTACT_ID_DEVICE as i32,
-                DC_CONTACT_ID_SELF as i32,
-                dc_create_smeared_timestamp(context).await,
-                msg.viewtype,
-                MessageState::InFresh,
-                msg.text.as_ref().cloned().unwrap_or_default(),
-                msg.param.to_string(),
-                &rfc724_mid
-            ],
-        ).await?;
+        context
+            .sql
+            .execute(
+                r#"
+INSERT INTO msgs (chat_id, from_id, to_id, timestamp, type, state, txt, param, rfc724_mid)
+  VALUES (?,?,?, ?,?,?, ?,?,?);
+"#,
+                paramsx![
+                    chat_id,
+                    DC_CONTACT_ID_DEVICE as i32,
+                    DC_CONTACT_ID_SELF as i32,
+                    dc_create_smeared_timestamp(context).await,
+                    msg.viewtype,
+                    MessageState::InFresh,
+                    msg.text.as_ref().cloned().unwrap_or_default(),
+                    msg.param.to_string(),
+                    &rfc724_mid
+                ],
+            )
+            .await?;
 
         let row_id = context
             .sql
@@ -3203,10 +3195,13 @@ mod tests {
         let t = dummy_context().await;
         let mut msg = Message::new(Viewtype::Text);
         msg.text = Some("foo".to_string());
-        let msg_id = add_device_msg(&t.ctx, None, Some(&mut msg)).await.unwrap();
+        println!("foo");
+        let msg_id = add_device_msg(&t.ctx, None, Some(&mut msg))
+            .await
+            .expect("failed to add device msg");
         let chat_id1 = message::Message::load_from_db(&t.ctx, msg_id)
             .await
-            .unwrap()
+            .expect("failed to load message")
             .chat_id;
         let chat_id2 = create_by_contact_id(&t.ctx, DC_CONTACT_ID_SELF)
             .await

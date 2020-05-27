@@ -586,41 +586,38 @@ async fn add_files_to_export(context: &Context, sql: &Sql) -> Result<()> {
 
     info!(context, "EXPORT: total_files_cnt={}", total_files_cnt);
 
-    sql.with_conn_async(|conn| async move {
-        // scan directory, pass 2: copy files
-        let mut dir_handle = async_std::fs::read_dir(&dir).await?;
+    // scan directory, pass 2: copy files
+    let mut dir_handle = async_std::fs::read_dir(&dir).await?;
 
-        let mut processed_files_cnt = 0;
-        while let Some(entry) = dir_handle.next().await {
-            let entry = entry?;
-            if context.shall_stop_ongoing().await {
-                return Ok(());
-            }
-            processed_files_cnt += 1;
-            let permille = max(min(processed_files_cnt * 1000 / total_files_cnt, 990), 10);
-            context.emit_event(Event::ImexProgress(permille));
+    let mut processed_files_cnt = 0;
+    while let Some(entry) = dir_handle.next().await {
+        let entry = entry?;
+        if context.shall_stop_ongoing().await {
+            return Ok(());
+        }
+        processed_files_cnt += 1;
+        let permille = max(min(processed_files_cnt * 1000 / total_files_cnt, 990), 10);
+        context.emit_event(Event::ImexProgress(permille));
 
-            let name_f = entry.file_name();
-            let name = name_f.to_string_lossy();
-            if name.starts_with("delta-chat") && name.ends_with(".bak") {
+        let name_f = entry.file_name();
+        let name = name_f.to_string_lossy();
+        if name.starts_with("delta-chat") && name.ends_with(".bak") {
+            continue;
+        }
+        info!(context, "EXPORT: copying filename={}", name);
+        let curr_path_filename = context.get_blobdir().join(entry.file_name());
+        if let Ok(buf) = dc_read_file(context, &curr_path_filename).await {
+            if buf.is_empty() {
                 continue;
             }
-            info!(context, "EXPORT: copying filename={}", name);
-            let curr_path_filename = context.get_blobdir().join(entry.file_name());
-            if let Ok(buf) = dc_read_file(context, &curr_path_filename).await {
-                if buf.is_empty() {
-                    continue;
-                }
-                // bail out if we can't insert
-                let mut stmt = conn.prepare_cached(
-                    "INSERT INTO backup_blobs (file_name, file_content) VALUES (?, ?);",
-                )?;
-                stmt.execute(paramsv![name, buf])?;
-            }
+            // bail out if we can't insert
+            sql.execute(
+                "INSERT INTO backup_blobs (file_name, file_content) VALUES (?, ?);",
+                paramsx![name.as_ref(), buf],
+            )
+            .await?;
         }
-        Ok(())
-    })
-    .await?;
+    }
 
     Ok(())
 }
