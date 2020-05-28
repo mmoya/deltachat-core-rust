@@ -276,7 +276,7 @@ async fn log_contactlist(context: &Context, contacts: &[u32]) {
                 }
             );
             let peerstate = Peerstate::from_addr(context, &addr).await;
-            if peerstate.is_some() && contact_id != 1 as libc::c_uint {
+            if peerstate.is_ok() && contact_id != 1 as libc::c_uint {
                 line2 = format!(
                     ", prefer-encrypt={}",
                     peerstate.as_ref().unwrap().prefer_encrypt

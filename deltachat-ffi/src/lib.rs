@@ -349,7 +349,7 @@ pub unsafe extern "C" fn dc_event_get_data1_int(event: *mut dc_event_t) -> libc:
         | Event::MsgDelivered { chat_id, .. }
         | Event::MsgFailed { chat_id, .. }
         | Event::MsgRead { chat_id, .. }
-        | Event::ChatModified(chat_id) => chat_id.to_u32() as libc::c_int,
+        | Event::ChatModified(chat_id) => chat_id.to_u32().unwrap_or_default() as libc::c_int,
         Event::ContactsChanged(id) | Event::LocationChanged(id) => {
             let id = id.unwrap_or_default();
             id as libc::c_int
@@ -396,7 +396,7 @@ pub unsafe extern "C" fn dc_event_get_data2_int(event: *mut dc_event_t) -> libc:
         | Event::IncomingMsg { msg_id, .. }
         | Event::MsgDelivered { msg_id, .. }
         | Event::MsgFailed { msg_id, .. }
-        | Event::MsgRead { msg_id, .. } => msg_id.to_u32() as libc::c_int,
+        | Event::MsgRead { msg_id, .. } => msg_id.to_u32().unwrap_or_default() as libc::c_int,
         Event::SecurejoinInviterProgress { progress, .. }
         | Event::SecurejoinJoinerProgress { progress, .. } => *progress as libc::c_int,
     }
@@ -844,7 +844,8 @@ pub unsafe extern "C" fn dc_get_chat_msgs(
         let arr = dc_array_t::from(
             chat::get_chat_msgs(&ctx, ChatId::new(chat_id), flags, marker_flag)
                 .await
-                .iter()
+                .unwrap_or_log_default(ctx, "failed get_chat_msgs")
+                .into_iter()
                 .map(|msg_id| msg_id.to_u32())
                 .collect::<Vec<u32>>(),
         );
@@ -909,7 +910,7 @@ pub unsafe extern "C" fn dc_get_fresh_msgs(
         let arr = dc_array_t::from(
             ctx.get_fresh_msgs()
                 .await
-                .iter()
+                .into_iter()
                 .map(|msg_id| msg_id.to_u32())
                 .collect::<Vec<u32>>(),
         );
@@ -986,7 +987,8 @@ pub unsafe extern "C" fn dc_get_chat_media(
                 or_msg_type3,
             )
             .await
-            .iter()
+            .unwrap_or_log_default(ctx, "failed get_chat_media")
+            .into_iter()
             .map(|msg_id| msg_id.to_u32())
             .collect::<Vec<u32>>(),
         );
@@ -1030,8 +1032,9 @@ pub unsafe extern "C" fn dc_get_next_media(
             or_msg_type3,
         )
         .await
+        .unwrap_or_log_default(ctx, "failed get_next_media")
         .map(|msg_id| msg_id.to_u32())
-        .unwrap_or(0)
+        .unwrap_or_else(|| 0)
     })
 }
 
@@ -1097,7 +1100,10 @@ pub unsafe extern "C" fn dc_get_chat_contacts(
     let ctx = &*context;
 
     block_on(async move {
-        let arr = dc_array_t::from(chat::get_chat_contacts(&ctx, ChatId::new(chat_id)).await);
+        let list = chat::get_chat_contacts(&ctx, ChatId::new(chat_id))
+            .await
+            .unwrap_or_log_default(ctx, "failed get_chat_contacts");
+        let arr = dc_array_t::from(list);
         Box::into_raw(Box::new(arr))
     })
 }
@@ -1118,7 +1124,7 @@ pub unsafe extern "C" fn dc_search_msgs(
         let arr = dc_array_t::from(
             ctx.search_msgs(ChatId::new(chat_id), to_string_lossy(query))
                 .await
-                .iter()
+                .into_iter()
                 .map(|msg_id| msg_id.to_u32())
                 .collect::<Vec<u32>>(),
         );
@@ -1307,7 +1313,12 @@ pub unsafe extern "C" fn dc_get_msg_info(
     }
     let ctx = &*context;
 
-    block_on(message::get_msg_info(&ctx, MsgId::new(msg_id))).strdup()
+    block_on(async move {
+        message::get_msg_info(ctx, MsgId::new(msg_id))
+            .await
+            .unwrap_or_log_default(ctx, "failed get_msg_info")
+    })
+    .strdup()
 }
 
 #[no_mangle]
@@ -1862,7 +1873,11 @@ pub unsafe extern "C" fn dc_set_location(
     }
     let ctx = &*context;
 
-    block_on(location::set(&ctx, latitude, longitude, accuracy)) as _
+    block_on(async move {
+        location::set(ctx, latitude, longitude, accuracy)
+            .await
+            .unwrap_or_log_default(ctx, "failed location::set")
+    }) as _
 }
 
 #[no_mangle]
@@ -2262,7 +2277,12 @@ pub unsafe extern "C" fn dc_chat_get_profile_image(chat: *mut dc_chat_t) -> *mut
     let ctx = &*ffi_chat.context;
 
     block_on(async move {
-        match ffi_chat.chat.get_profile_image(&ctx).await {
+        match ffi_chat
+            .chat
+            .get_profile_image(&ctx)
+            .await
+            .unwrap_or_log_default(ctx, "failed get_profile_image")
+        {
             Some(p) => p.to_string_lossy().strdup(),
             None => ptr::null_mut(),
         }
@@ -2278,7 +2298,13 @@ pub unsafe extern "C" fn dc_chat_get_color(chat: *mut dc_chat_t) -> u32 {
     let ffi_chat = &*chat;
     let ctx = &*ffi_chat.context;
 
-    block_on(ffi_chat.chat.get_color(&ctx))
+    block_on(async move {
+        ffi_chat
+            .chat
+            .get_color(&ctx)
+            .await
+            .unwrap_or_log_default(ctx, "failed dc_chat_get_color")
+    })
 }
 
 #[no_mangle]
