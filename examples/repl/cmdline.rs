@@ -484,7 +484,7 @@ pub async fn cmdline(context: Context, line: &str, chat_id: &mut ChatId) -> Resu
             context.maybe_network().await;
         }
         "housekeeping" => {
-            sql::housekeeping(&context).await;
+            sql::housekeeping(&context).await?;
         }
         "listchats" | "listarchived" | "chats" => {
             let listflags = if arg0 == "listarchived" { 0x01 } else { 0 };
@@ -568,8 +568,8 @@ pub async fn cmdline(context: Context, line: &str, chat_id: &mut ChatId) -> Resu
             ensure!(sel_chat.is_some(), "Failed to select chat");
             let sel_chat = sel_chat.as_ref().unwrap();
 
-            let msglist = chat::get_chat_msgs(&context, sel_chat.get_id(), 0x1, None).await;
-            let members = chat::get_chat_contacts(&context, sel_chat.id).await;
+            let msglist = chat::get_chat_msgs(&context, sel_chat.get_id(), 0x1, None).await?;
+            let members = chat::get_chat_contacts(&context, sel_chat.id).await?;
             let subtitle = if sel_chat.is_device_talk() {
                 "device-talk".to_string()
             } else if sel_chat.get_type() == Chattype::Single && !members.is_empty() {
@@ -589,7 +589,7 @@ pub async fn cmdline(context: Context, line: &str, chat_id: &mut ChatId) -> Resu
                 } else {
                     ""
                 },
-                match sel_chat.get_profile_image(&context).await {
+                match sel_chat.get_profile_image(&context).await? {
                     Some(icon) => match icon.to_str() {
                         Some(icon) => format!(" Icon: {}", icon),
                         _ => " Icon: Err".to_string(),
@@ -686,7 +686,7 @@ pub async fn cmdline(context: Context, line: &str, chat_id: &mut ChatId) -> Resu
             ensure!(sel_chat.is_some(), "No chat selected.");
 
             let contacts =
-                chat::get_chat_contacts(&context, sel_chat.as_ref().unwrap().get_id()).await;
+                chat::get_chat_contacts(&context, sel_chat.as_ref().unwrap().get_id()).await?;
             println!("Memberlist:");
 
             log_contactlist(&context, &contacts).await;
@@ -853,7 +853,7 @@ pub async fn cmdline(context: Context, line: &str, chat_id: &mut ChatId) -> Resu
                 Viewtype::Gif,
                 Viewtype::Video,
             )
-            .await;
+            .await?;
             println!("{} images or videos: ", images.len());
             for (i, data) in images.iter().enumerate() {
                 if 0 == i {
@@ -887,7 +887,7 @@ pub async fn cmdline(context: Context, line: &str, chat_id: &mut ChatId) -> Resu
         "msginfo" => {
             ensure!(!arg1.is_empty(), "Argument <msg-id> missing.");
             let id = MsgId::new(arg1.parse()?);
-            let res = message::get_msg_info(&context, id).await;
+            let res = message::get_msg_info(&context, id).await?;
             println!("{}", res);
         }
         "listfresh" => {
