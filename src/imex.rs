@@ -405,6 +405,7 @@ async fn imex_inner(
             Ok(())
         }
         Err(err) => {
+            error!(context, "IMEX FAILED: {}", err);
             context.emit_event(Event::ImexProgress(0));
             bail!("IMEX FAILED to complete: {}", err);
         }
@@ -456,19 +457,13 @@ async fn import_backup(context: &Context, backup_to_import: impl AsRef<Path>) ->
     );
 
     let pool = context.sql.get_pool().await?;
-
     let mut files = sqlx::query_as("SELECT file_name, file_content FROM backup_blobs ORDER BY id;")
         .fetch(&pool);
 
-    let mut all_files_extracted = true;
     let mut processed_files_cnt = 0;
-
     while let Some(files_result) = files.next().await {
         let (file_name, file_blob): (String, Vec<u8>) = files_result?;
-        processed_files_cnt += 1;
-
         if context.shall_stop_ongoing().await {
-            all_files_extracted = false;
             break;
         }
 
@@ -486,24 +481,22 @@ async fn import_backup(context: &Context, backup_to_import: impl AsRef<Path>) ->
 
         let path_filename = context.get_blobdir().join(file_name);
         dc_write_file(context, &path_filename, &file_blob).await?;
+
+        processed_files_cnt += 1;
     }
 
-    if all_files_extracted {
-        // only delete backup_blobs if all files were successfully extracted
-        context
-            .sql
-            .execute_batch(
-                r#"
-DROP TABLE backup_blobs;
-VACUUM;
-"#,
-            )
-            .await?;
+    ensure!(
+        processed_files_cnt == total_files_cnt,
+        "received stop signal"
+    );
 
-        Ok(())
-    } else {
-        bail!("received stop signal");
-    }
+    context
+        .sql
+        .execute("DROP TABLE backup_blobs;", paramsx![])
+        .await?;
+    context.sql.execute("VACUUM;", paramsx![]).await?;
+
+    Ok(())
 }
 
 /*******************************************************************************
@@ -548,17 +541,17 @@ async fn export_backup(context: &Context, dir: impl AsRef<Path>) -> Result<()> {
     dest_sql.open(context, &dest_path_filename, false).await?;
 
     let res = match add_files_to_export(context, &dest_sql).await {
-        Err(err) => {
-            dc_delete_file(context, &dest_path_filename).await;
-            error!(context, "backup failed: {}", err);
-            Err(err)
-        }
         Ok(()) => {
             dest_sql
                 .set_raw_config_int(context, "backup_time", now as i32)
                 .await?;
             context.emit_event(Event::ImexFileWritten(dest_path_filename));
             Ok(())
+        }
+        Err(err) => {
+            dc_delete_file(context, &dest_path_filename).await;
+            error!(context, "backup failed: {}", err);
+            Err(err)
         }
     };
     dest_sql.close().await;

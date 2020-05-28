@@ -1,14 +1,4 @@
 #[macro_export]
-macro_rules! paramsv {
-    () => {
-        Vec::new()
-    };
-    ($($param:expr),+ $(,)?) => {
-        vec![$(&$param as &dyn $crate::ToSql),+]
-    };
-}
-
-#[macro_export]
 macro_rules! paramsx {
     () => {
         sqlx::sqlite::SqliteArguments::default()
