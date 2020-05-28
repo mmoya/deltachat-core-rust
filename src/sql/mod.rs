@@ -61,13 +61,17 @@ impl Sql {
         Self::default()
     }
 
+    /// Returns `true` if there is a working sqlite connection, `false` otherwise.
     pub async fn is_open(&self) -> bool {
-        self.xpool.read().await.is_some()
+        let pool = self.xpool.read().await;
+        pool.is_some() && !pool.as_ref().unwrap().is_closed()
     }
 
+    /// Shuts down all sqlite connections.
     pub async fn close(&self) {
-        let _ = self.xpool.write().await.take();
-        // drop closes the connection
+        if let Some(pool) = self.xpool.write().await.take() {
+            pool.close().await;
+        }
     }
 
     pub async fn open<T: AsRef<Path>>(

@@ -76,8 +76,11 @@ pub struct RunningState {
 pub fn get_info() -> BTreeMap<&'static str, String> {
     let mut res = BTreeMap::new();
     res.insert("deltachat_core_version", format!("v{}", &*DC_VERSION_STR));
-    // TODO: get version
-    // res.insert("sqlite_version", rusqlite::version().to_string());
+
+    let version =
+        String::from_utf8(libsqlite3_sys::SQLITE_VERSION.to_vec()).expect("invalid version");
+    res.insert("sqlite_version", version);
+
     res.insert("arch", (std::mem::size_of::<usize>() * 8).to_string());
     res.insert("level", "awesome".into());
     res
@@ -86,8 +89,6 @@ pub fn get_info() -> BTreeMap<&'static str, String> {
 impl Context {
     /// Creates new context.
     pub async fn new(os_name: String, dbfile: PathBuf) -> Result<Context> {
-        // pretty_env_logger::try_init_timed().ok();
-
         let mut blob_fname = OsString::new();
         blob_fname.push(dbfile.file_name().unwrap_or_default());
         blob_fname.push("-blobs");
