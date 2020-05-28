@@ -142,27 +142,6 @@ impl Sql {
         Ok(tx)
     }
 
-    pub async fn query_map<T, F, G, H>(
-        &self,
-        sql: impl AsRef<str>,
-        params: Vec<&dyn crate::ToSql>,
-        f: F,
-        mut g: G,
-    ) -> Result<H>
-    where
-        F: FnMut(&rusqlite::Row) -> rusqlite::Result<T>,
-        G: FnMut(rusqlite::MappedRows<F>) -> Result<H>,
-    {
-        let sql = sql.as_ref();
-
-        let lock = self.pool.read().await;
-        let pool = lock.as_ref().ok_or_else(|| Error::SqlNoConnection)?;
-        let conn = pool.get()?;
-        let mut stmt = conn.prepare(sql)?;
-        let res = stmt.query_map(&params, f)?;
-        g(res)
-    }
-
     /// Execute a query which is expected to return zero or more rows.
     pub async fn query_rows<T, S: AsRef<str>>(
         &self,

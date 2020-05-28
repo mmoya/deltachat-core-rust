@@ -1922,14 +1922,32 @@ mod tests {
         let chat = chat::Chat::load_from_db(&t.ctx, chat_id).await.unwrap();
         assert_eq!(chat.typ, Chattype::Single);
         assert_eq!(chat.name, "Bob");
-        assert_eq!(chat::get_chat_contacts(&t.ctx, chat_id).await.len(), 1);
-        assert_eq!(chat::get_chat_msgs(&t.ctx, chat_id, 0, None).await.len(), 1);
+        assert_eq!(
+            chat::get_chat_contacts(&t.ctx, chat_id)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            chat::get_chat_msgs(&t.ctx, chat_id, 0, None)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
 
         // receive a non-delta-message from Bob, shows up because of the show_emails setting
         dc_receive_imf(&t.ctx, ONETOONE_NOREPLY_MAIL, "INBOX", 2, false)
             .await
             .unwrap();
-        assert_eq!(chat::get_chat_msgs(&t.ctx, chat_id, 0, None).await.len(), 2);
+        assert_eq!(
+            chat::get_chat_msgs(&t.ctx, chat_id, 0, None)
+                .await
+                .unwrap()
+                .len(),
+            2
+        );
 
         // let Bob create an adhoc-group by a non-delta-message, shows up because of the show_emails setting
         dc_receive_imf(&t.ctx, GRP_MAIL, "INBOX", 3, false)
@@ -1943,7 +1961,13 @@ mod tests {
         let chat = chat::Chat::load_from_db(&t.ctx, chat_id).await.unwrap();
         assert_eq!(chat.typ, Chattype::Group);
         assert_eq!(chat.name, "group with Alice, Bob and Claire");
-        assert_eq!(chat::get_chat_contacts(&t.ctx, chat_id).await.len(), 3);
+        assert_eq!(
+            chat::get_chat_contacts(&t.ctx, chat_id)
+                .await
+                .unwrap()
+                .len(),
+            3
+        );
     }
 
     #[async_std::test]
@@ -1967,7 +1991,13 @@ mod tests {
         let chat = chat::Chat::load_from_db(&t.ctx, chat_id).await.unwrap();
         assert_eq!(chat.typ, Chattype::Group);
         assert_eq!(chat.name, "group with Alice, Bob and Claire");
-        assert_eq!(chat::get_chat_contacts(&t.ctx, chat_id).await.len(), 3);
+        assert_eq!(
+            chat::get_chat_contacts(&t.ctx, chat_id)
+                .await
+                .unwrap()
+                .len(),
+            3
+        );
     }
 
     #[async_std::test]
@@ -1993,7 +2023,10 @@ mod tests {
             .unwrap();
         chat::add_contact_to_chat(&t.ctx, group_id, bob_id).await;
         assert_eq!(
-            chat::get_chat_msgs(&t.ctx, group_id, 0, None).await.len(),
+            chat::get_chat_msgs(&t.ctx, group_id, 0, None)
+                .await
+                .unwrap()
+                .len(),
             0
         );
         group_id
@@ -2036,7 +2069,9 @@ mod tests {
         )
         .await
         .unwrap();
-        let msgs = chat::get_chat_msgs(&t.ctx, group_id, 0, None).await;
+        let msgs = chat::get_chat_msgs(&t.ctx, group_id, 0, None)
+            .await
+            .unwrap();
         assert_eq!(msgs.len(), 1);
         let msg_id = msgs.first().unwrap();
         let msg = message::Message::load_from_db(&t.ctx, msg_id.clone())
@@ -2087,7 +2122,10 @@ mod tests {
         )
         .await.unwrap();
         assert_eq!(
-            chat::get_chat_msgs(&t.ctx, group_id, 0, None).await.len(),
+            chat::get_chat_msgs(&t.ctx, group_id, 0, None)
+                .await
+                .unwrap()
+                .len(),
             1
         );
         let msg = message::Message::load_from_db(&t.ctx, msg_id.clone())
@@ -2171,7 +2209,7 @@ mod tests {
                 .get_authname(),
             "Фамилия Имя", // The name was "Имя, Фамилия" and ("lastname, firstname") and should be swapped to "firstname, lastname"
         );
-        let msgs = chat::get_chat_msgs(&t.ctx, chat_id, 0, None).await;
+        let msgs = chat::get_chat_msgs(&t.ctx, chat_id, 0, None).await.unwrap();
         assert_eq!(msgs.len(), 1);
         let msg_id = msgs.first().unwrap();
         let msg = message::Message::load_from_db(&t.ctx, msg_id.clone())

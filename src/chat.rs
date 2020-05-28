@@ -4,10 +4,12 @@ use std::convert::TryFrom;
 use std::time::{Duration, SystemTime};
 
 use async_std::path::{Path, PathBuf};
+use async_std::prelude::*;
 use deltachat_derive::*;
 use itertools::Itertools;
 use num_traits::FromPrimitive;
 use serde::{Deserialize, Serialize};
+use sqlx::{arguments::Arguments, sqlite::SqliteQueryAs, Cursor, Row};
 
 use crate::blob::{BlobError, BlobObject};
 use crate::chatlist::*;
@@ -531,8 +533,6 @@ pub struct Chat {
 
 impl<'a> sqlx::FromRow<'a, sqlx::sqlite::SqliteRow<'a>> for Chat {
     fn from_row(row: &sqlx::sqlite::SqliteRow<'a>) -> Result<Self, sqlx::Error> {
-        use sqlx::Row;
-
         let c = Chat {
             id: row.try_get("id").unwrap_or_default(),
             typ: row.try_get("type")?,
@@ -590,7 +590,7 @@ SELECT c.id, c.type, c.name, c.grpid, c.param, c.archived,
                     chat.name = context.stock_str(StockMessage::StarredMsgs).await.into();
                 } else {
                     if chat.typ == Chattype::Single {
-                        let contacts = get_chat_contacts(context, chat.id).await;
+                        let contacts = get_chat_contacts(context, chat.id).await?;
                         let mut chat_name = "Err [Name not found]".to_owned();
                         if let Some(contact_id) = contacts.first() {
                             if let Ok(contact) = Contact::get_by_id(context, *contact_id).await {
@@ -650,32 +650,32 @@ SELECT c.id, c.type, c.name, c.grpid, c.param, c.archived,
         &self.name
     }
 
-    pub async fn get_profile_image(&self, context: &Context) -> Option<PathBuf> {
+    pub async fn get_profile_image(&self, context: &Context) -> Result<Option<PathBuf>, Error> {
         if let Some(image_rel) = self.param.get(Param::ProfileImage) {
             if !image_rel.is_empty() {
-                return Some(dc_get_abs_path(context, image_rel));
+                return Ok(Some(dc_get_abs_path(context, image_rel)));
             }
         } else if self.typ == Chattype::Single {
-            let contacts = get_chat_contacts(context, self.id).await;
+            let contacts = get_chat_contacts(context, self.id).await?;
             if let Some(contact_id) = contacts.first() {
                 if let Ok(contact) = Contact::get_by_id(context, *contact_id).await {
-                    return contact.get_profile_image(context).await;
+                    return Ok(contact.get_profile_image(context).await);
                 }
             }
         }
 
-        None
+        Ok(None)
     }
 
     pub async fn get_gossiped_timestamp(&self, context: &Context) -> i64 {
         get_gossiped_timestamp(context, self.id).await
     }
 
-    pub async fn get_color(&self, context: &Context) -> u32 {
+    pub async fn get_color(&self, context: &Context) -> Result<u32, Error> {
         let mut color = 0;
 
         if self.typ == Chattype::Single {
-            let contacts = get_chat_contacts(context, self.id).await;
+            let contacts = get_chat_contacts(context, self.id).await?;
             if let Some(contact_id) = contacts.first() {
                 if let Ok(contact) = Contact::get_by_id(context, *contact_id).await {
                     color = contact.get_color();
@@ -685,7 +685,7 @@ SELECT c.id, c.type, c.name, c.grpid, c.param, c.archived,
             color = dc_str_to_color(&self.name);
         }
 
-        color
+        Ok(color)
     }
 
     /// Returns a struct describing the current state of the chat.
@@ -705,12 +705,12 @@ SELECT c.id, c.type, c.name, c.grpid, c.param, c.archived,
             param: self.param.to_string(),
             gossiped_timestamp: self.get_gossiped_timestamp(context).await,
             is_sending_locations: self.is_sending_locations,
-            color: self.get_color(context).await,
+            color: self.get_color(context).await?,
             profile_image: self
                 .get_profile_image(context)
-                .await
+                .await?
                 .map(Into::into)
-                .unwrap_or_else(std::path::PathBuf::new),
+                .unwrap_or_default(),
             draft,
             is_muted: self.is_muted(),
         })
@@ -820,48 +820,41 @@ SELECT c.id, c.type, c.name, c.grpid, c.param, c.archived,
                 // take care that this statement returns NULL rows
                 // if there is no peerstates for a chat member!
                 // for DC_PARAM_SELFTALK this statement does not return any row
-                let res = context
-                    .sql
-                    .query_map(
-                        "SELECT ps.prefer_encrypted, c.addr \
-                     FROM chats_contacts cc  \
-                     LEFT JOIN contacts c ON cc.contact_id=c.id  \
-                     LEFT JOIN acpeerstates ps ON c.addr=ps.addr  \
-                     WHERE cc.chat_id=?  AND cc.contact_id>9;",
-                        paramsv![self.id],
-                        |row| {
-                            let addr: String = row.get(1)?;
+                let pool = context.sql.get_pool().await?;
+                let mut rows = sqlx::query_as(
+                    r#"
+SELECT ps.prefer_encrypted, c.addr
+  FROM chats_contacts cc
+  LEFT JOIN contacts c ON cc.contact_id=c.id
+  LEFT JOIN acpeerstates ps ON c.addr=ps.addr
+  WHERE cc.chat_id=? AND cc.contact_id>9;
+"#,
+                )
+                .bind(self.id)
+                .fetch(&pool);
 
-                            if let Some(prefer_encrypted) = row.get::<_, Option<i32>>(0)? {
-                                // the peerstate exist, so we have either public_key or gossip_key
-                                // and can encrypt potentially
-                                if prefer_encrypted != 1 {
-                                    info!(
-                                        context,
-                                        "[autocrypt] peerstate for {} is {}",
-                                        addr,
-                                        if prefer_encrypted == 0 {
-                                            "NOPREFERENCE"
-                                        } else {
-                                            "RESET"
-                                        },
-                                    );
-                                    all_mutual = false;
-                                }
-                            } else {
-                                info!(context, "[autocrypt] no peerstate for {}", addr,);
-                                can_encrypt = false;
-                                all_mutual = false;
-                            }
-                            Ok(())
-                        },
-                        |rows| rows.collect::<Result<Vec<_>, _>>().map_err(Into::into),
-                    )
-                    .await;
-                match res {
-                    Ok(_) => {}
-                    Err(err) => {
-                        warn!(context, "chat: failed to load peerstates: {:?}", err);
+                while let Some(row) = rows.next().await {
+                    let (prefer_encrypted, addr): (Option<i32>, String) = row?;
+                    if let Some(prefer_encrypted) = prefer_encrypted {
+                        // the peerstate exist, so we have either public_key or gossip_key
+                        // and can encrypt potentially
+                        if prefer_encrypted != 1 {
+                            info!(
+                                context,
+                                "[autocrypt] peerstate for {} is {}",
+                                addr,
+                                if prefer_encrypted == 0 {
+                                    "NOPREFERENCE"
+                                } else {
+                                    "RESET"
+                                },
+                            );
+                            all_mutual = false;
+                        }
+                    } else {
+                        info!(context, "[autocrypt] no peerstate for {}", addr,);
+                        can_encrypt = false;
+                        all_mutual = false;
                     }
                 }
 
@@ -1574,51 +1567,22 @@ pub async fn get_chat_msgs(
     chat_id: ChatId,
     flags: u32,
     marker1before: Option<MsgId>,
-) -> Vec<MsgId> {
-    match delete_device_expired_messages(context).await {
-        Err(err) => warn!(context, "Failed to delete expired messages: {}", err),
-        Ok(messages_deleted) => {
-            if messages_deleted {
-                context.emit_event(Event::MsgsChanged {
-                    msg_id: MsgId::new(0),
-                    chat_id: ChatId::new(0),
-                })
-            }
-        }
+) -> Result<Vec<MsgId>, Error> {
+    let messages_deleted = delete_device_expired_messages(context).await?;
+    if messages_deleted {
+        context.emit_event(Event::MsgsChanged {
+            msg_id: MsgId::new(0),
+            chat_id: ChatId::new(0),
+        })
     }
 
-    let process_row =
-        |row: &rusqlite::Row| Ok((row.get::<_, MsgId>("id")?, row.get::<_, i64>("timestamp")?));
-    let process_rows = |rows: rusqlite::MappedRows<_>| {
-        let mut ret = Vec::new();
-        let mut last_day = 0;
-        let cnv_to_local = dc_gm2local_offset();
-        for row in rows {
-            let (curr_id, ts) = row?;
-            if let Some(marker_id) = marker1before {
-                if curr_id == marker_id {
-                    ret.push(MsgId::new(DC_MSG_ID_MARKER1));
-                }
-            }
-            if (flags & DC_GCM_ADDDAYMARKER) != 0 {
-                let curr_local_timestamp = ts + cnv_to_local;
-                let curr_day = curr_local_timestamp / 86400;
-                if curr_day != last_day {
-                    ret.push(MsgId::new(DC_MSG_ID_DAYMARKER));
-                    last_day = curr_day;
-                }
-            }
-            ret.push(curr_id);
-        }
-        Ok(ret)
-    };
-    let success = if chat_id.is_deaddrop() {
+    let pool = context.sql.get_pool().await?;
+    let mut rows = if chat_id.is_deaddrop() {
         let show_emails = ShowEmails::from_i32(context.get_config_int(Config::ShowEmails).await)
             .unwrap_or_default();
-        context
-            .sql
-            .query_map(
-                "SELECT m.id AS id, m.timestamp AS timestamp
+
+        sqlx::query_as(
+            "SELECT m.id AS id, m.timestamp AS timestamp
                FROM msgs m
                LEFT JOIN chats
                       ON m.chat_id=chats.id
@@ -1631,16 +1595,12 @@ pub async fn get_chat_msgs(
                 AND contacts.blocked=0
                 AND m.msgrmsg>=?
               ORDER BY m.timestamp,m.id;",
-                paramsv![if show_emails == ShowEmails::All { 0 } else { 1 }],
-                process_row,
-                process_rows,
-            )
-            .await
+        )
+        .bind(if show_emails == ShowEmails::All { 0 } else { 1 })
+        .fetch(&pool)
     } else if chat_id.is_starred() {
-        context
-            .sql
-            .query_map(
-                "SELECT m.id AS id, m.timestamp AS timestamp
+        sqlx::query_as(
+            "SELECT m.id AS id, m.timestamp AS timestamp
                FROM msgs m
                LEFT JOIN contacts ct
                       ON m.from_id=ct.id
@@ -1648,33 +1608,42 @@ pub async fn get_chat_msgs(
                 AND m.hidden=0
                 AND ct.blocked=0
               ORDER BY m.timestamp,m.id;",
-                paramsv![],
-                process_row,
-                process_rows,
-            )
-            .await
+        )
+        .fetch(&pool)
     } else {
-        context
-            .sql
-            .query_map(
-                "SELECT m.id AS id, m.timestamp AS timestamp
+        sqlx::query_as(
+            "SELECT m.id AS id, m.timestamp AS timestamp
                FROM msgs m
               WHERE m.chat_id=?
                 AND m.hidden=0
               ORDER BY m.timestamp, m.id;",
-                paramsv![chat_id],
-                process_row,
-                process_rows,
-            )
-            .await
+        )
+        .bind(chat_id)
+        .fetch(&pool)
     };
-    match success {
-        Ok(ret) => ret,
-        Err(e) => {
-            error!(context, "Failed to get chat messages: {}", e);
-            Vec::new()
+
+    let mut ret = Vec::new();
+    let mut last_day = 0;
+    let cnv_to_local = dc_gm2local_offset();
+
+    while let Some(row) = rows.next().await {
+        let (curr_id, ts): (MsgId, i64) = row?;
+        if let Some(marker_id) = marker1before {
+            if curr_id == marker_id {
+                ret.push(MsgId::new(DC_MSG_ID_MARKER1));
+            }
         }
+        if (flags & DC_GCM_ADDDAYMARKER) != 0 {
+            let curr_local_timestamp = ts + cnv_to_local;
+            let curr_day = curr_local_timestamp / 86400;
+            if curr_day != last_day {
+                ret.push(MsgId::new(DC_MSG_ID_DAYMARKER));
+                last_day = curr_day;
+            }
+        }
+        ret.push(curr_id);
     }
+    Ok(ret)
 }
 
 pub async fn marknoticed_chat(context: &Context, chat_id: ChatId) -> Result<(), Error> {
@@ -1784,17 +1753,17 @@ pub async fn get_chat_media(
     msg_type: Viewtype,
     msg_type2: Viewtype,
     msg_type3: Viewtype,
-) -> Vec<MsgId> {
-    // TODO This query could/should be converted to `AND type IN (?, ?, ?)`.
-    context
+) -> Result<Vec<MsgId>, Error> {
+    // TODO: This query could/should be converted to `AND type IN (?, ?, ?)`.
+    let ids = context
         .sql
-        .query_map(
+        .query_values(
             "SELECT id
                FROM msgs
               WHERE chat_id=?
                 AND (type=? OR type=? OR type=?)
               ORDER BY timestamp, id;",
-            paramsv![
+            paramsx![
                 chat_id,
                 msg_type,
                 if msg_type2 != Viewtype::Unknown {
@@ -1808,19 +1777,10 @@ pub async fn get_chat_media(
                     msg_type
                 },
             ],
-            |row| row.get::<_, MsgId>(0),
-            |ids| {
-                let mut ret = Vec::new();
-                for id in ids {
-                    if let Ok(msg_id) = id {
-                        ret.push(msg_id)
-                    }
-                }
-                Ok(ret)
-            },
         )
-        .await
-        .unwrap_or_default()
+        .await?;
+
+    Ok(ids)
 }
 
 /// Indicates the direction over which to iterate.
@@ -1838,69 +1798,72 @@ pub async fn get_next_media(
     msg_type: Viewtype,
     msg_type2: Viewtype,
     msg_type3: Viewtype,
-) -> Option<MsgId> {
+) -> Result<Option<MsgId>, Error> {
+    let msg = Message::load_from_db(context, curr_msg_id).await?;
+    let list: Vec<MsgId> = get_chat_media(
+        context,
+        msg.chat_id,
+        if msg_type != Viewtype::Unknown {
+            msg_type
+        } else {
+            msg.viewtype
+        },
+        msg_type2,
+        msg_type3,
+    )
+    .await?;
+
     let mut ret: Option<MsgId> = None;
 
-    if let Ok(msg) = Message::load_from_db(context, curr_msg_id).await {
-        let list: Vec<MsgId> = get_chat_media(
-            context,
-            msg.chat_id,
-            if msg_type != Viewtype::Unknown {
-                msg_type
-            } else {
-                msg.viewtype
-            },
-            msg_type2,
-            msg_type3,
-        )
-        .await;
-        for (i, msg_id) in list.iter().enumerate() {
-            if curr_msg_id == *msg_id {
-                match direction {
-                    Direction::Forward => {
-                        if i + 1 < list.len() {
-                            ret = list.get(i + 1).copied();
-                        }
-                    }
-                    Direction::Backward => {
-                        if i >= 1 {
-                            ret = list.get(i - 1).copied();
-                        }
+    for (i, msg_id) in list.iter().enumerate() {
+        if curr_msg_id == *msg_id {
+            match direction {
+                Direction::Forward => {
+                    if i + 1 < list.len() {
+                        ret = list.get(i + 1).copied();
                     }
                 }
-                break;
+                Direction::Backward => {
+                    if i >= 1 {
+                        ret = list.get(i - 1).copied();
+                    }
+                }
             }
+            break;
         }
     }
-    ret
+
+    Ok(ret)
 }
 
-pub async fn get_chat_contacts(context: &Context, chat_id: ChatId) -> Vec<u32> {
+pub async fn get_chat_contacts(context: &Context, chat_id: ChatId) -> Result<Vec<u32>, Error> {
     /* Normal chats do not include SELF.  Group chats do (as it may happen that one is deleted from a
     groupchat but the chats stays visible, moreover, this makes displaying lists easier) */
 
     if chat_id.is_deaddrop() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
 
     // we could also create a list for all contacts in the deaddrop by searching contacts belonging to chats with
     // chats.blocked=2, however, currently this is not needed
 
-    context
+    let ids = context
         .sql
-        .query_map(
+        .query_values(
             "SELECT cc.contact_id
                FROM chats_contacts cc
                LEFT JOIN contacts c
                       ON c.id=cc.contact_id
               WHERE cc.chat_id=?
               ORDER BY c.id=1, LOWER(c.name||c.addr), c.id;",
-            paramsv![chat_id],
-            |row| row.get::<_, u32>(0),
-            |ids| ids.collect::<Result<Vec<_>, _>>().map_err(Into::into),
+            paramsx![chat_id],
         )
-        .await
-        .unwrap_or_default()
+        .await?
+        .into_iter()
+        .map(|id: i64| id as u32)
+        .collect();
+
+    Ok(ids)
 }
 
 pub async fn create_group_chat(
@@ -2171,31 +2134,28 @@ pub(crate) async fn shall_attach_selfavatar(
     }
 
     let timestamp_some_days_ago = time() - DC_RESEND_USER_AVATAR_DAYS * 24 * 60 * 60;
-    let needs_attach = context
-        .sql
-        .query_map(
-            r#"
+    let pool = context.sql.get_pool().await?;
+    let mut needs_attach = false;
+
+    let mut rows = sqlx::query_as(
+        r#"
 SELECT c.selfavatar_sent
   FROM chats_contacts cc
   LEFT JOIN contacts c ON c.id=cc.contact_id
   WHERE cc.chat_id=? AND cc.contact_id!=?;
 "#,
-            paramsv![chat_id, DC_CONTACT_ID_SELF],
-            |row| Ok(row.get::<_, i64>(0)),
-            |rows| {
-                let mut needs_attach = false;
-                for row in rows {
-                    if let Ok(selfavatar_sent) = row {
-                        let selfavatar_sent = selfavatar_sent?;
-                        if selfavatar_sent < timestamp_some_days_ago {
-                            needs_attach = true;
-                        }
-                    }
-                }
-                Ok(needs_attach)
-            },
-        )
-        .await?;
+    )
+    .bind(chat_id)
+    .bind(DC_CONTACT_ID_SELF as i32)
+    .fetch(&pool);
+
+    while let Some(row) = rows.next().await {
+        let (selfavatar_sent,): (i64,) = row?;
+        if selfavatar_sent < timestamp_some_days_ago {
+            needs_attach = true;
+        }
+    }
+
     Ok(needs_attach)
 }
 
@@ -2569,21 +2529,20 @@ pub async fn forward_msgs(
     if let Ok(mut chat) = Chat::load_from_db(context, chat_id).await {
         ensure!(chat.can_send(), "cannot send to {}", chat_id);
         curr_timestamp = dc_create_smeared_timestamps(context, msg_ids.len()).await;
-        let ids = context
-            .sql
-            .query_map(
-                format!(
-                    "SELECT id FROM msgs WHERE id IN({}) ORDER BY timestamp,id",
-                    msg_ids.iter().map(|_| "?").join(",")
-                ),
-                msg_ids.iter().map(|v| v as &dyn crate::ToSql).collect(),
-                |row| row.get::<_, MsgId>(0),
-                |ids| ids.collect::<Result<Vec<_>, _>>().map_err(Into::into),
-            )
-            .await?;
 
-        for id in ids {
-            let src_msg_id: MsgId = id;
+        let pool = context.sql.get_pool().await?;
+        let mut args = sqlx::sqlite::SqliteArguments::default();
+        for msg_id in msg_ids {
+            args.add(msg_id);
+        }
+        let query = format!(
+            "SELECT id FROM msgs WHERE id IN({}) ORDER BY timestamp,id",
+            msg_ids.iter().map(|_| "?").join(",")
+        );
+        let mut rows = sqlx::query(&query).bind_all(args).fetch(&pool);
+
+        while let Ok(Some(row)) = rows.next().await {
+            let src_msg_id: MsgId = row.try_get(0)?;
             let msg = Message::load_from_db(context, src_msg_id).await;
             if msg.is_err() {
                 break;
@@ -2948,7 +2907,7 @@ mod tests {
             chat.name,
             t.ctx.stock_str(StockMessage::SavedMessages).await
         );
-        assert!(chat.get_profile_image(&t.ctx).await.is_some());
+        assert!(chat.get_profile_image(&t.ctx).await.unwrap().is_some());
     }
 
     #[async_std::test]
@@ -3044,7 +3003,7 @@ mod tests {
             chat.name,
             t.ctx.stock_str(StockMessage::DeviceMessages).await
         );
-        assert!(chat.get_profile_image(&t.ctx).await.is_some());
+        assert!(chat.get_profile_image(&t.ctx).await.unwrap().is_some());
 
         // delete device message, make sure it is not added again
         message::delete_msgs(&t.ctx, &[*msg1_id.as_ref().unwrap()]).await;
