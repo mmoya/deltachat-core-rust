@@ -133,7 +133,7 @@ pub async fn try_decrypt(
     let autocryptheader = Aheader::from_headers(context, &from, &mail.headers);
 
     if message_time > 0 {
-        peerstate = Peerstate::from_addr(context, &from).await;
+        peerstate = Peerstate::from_addr(context, &from).await.ok();
 
         if let Some(ref mut peerstate) = peerstate {
             if let Some(ref header) = autocryptheader {
@@ -161,7 +161,7 @@ pub async fn try_decrypt(
             Keyring::load_self_private_for_decrypting(context, self_addr).await
         {
             if peerstate.as_ref().map(|p| p.last_seen).unwrap_or_else(|| 0) == 0 {
-                peerstate = Peerstate::from_addr(&context, &from).await;
+                peerstate = Peerstate::from_addr(&context, &from).await.ok();
             }
             if let Some(peerstate) = peerstate {
                 if peerstate.degrade_event.is_some() {

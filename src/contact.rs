@@ -678,9 +678,10 @@ SELECT c.id FROM contacts c
             let peerstate = Peerstate::from_addr(context, &contact.addr).await;
             let loginparam = LoginParam::from_database(context, "configured_").await;
 
-            if peerstate.is_some()
+            if peerstate.is_ok()
                 && peerstate
                     .as_ref()
+                    .ok()
                     .and_then(|p| p.peek_key(PeerstateVerifiedStatus::Unverified))
                     .is_some()
             {
@@ -933,7 +934,7 @@ SELECT c.id FROM contacts c
         }
 
         let peerstate = Peerstate::from_addr(context, &self.addr).await;
-        if let Some(ps) = peerstate {
+        if let Ok(ps) = peerstate {
             if ps.verified_key.is_some() {
                 return VerifiedStatus::BidirectVerified;
             }

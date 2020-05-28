@@ -359,7 +359,7 @@ async fn fingerprint_equals_sender(
 
     if contacts.len() == 1 {
         let contact = Contact::load_from_db(context, contacts[0]).await?;
-        if let Some(peerstate) = Peerstate::from_addr(context, contact.get_addr()).await {
+        if let Ok(peerstate) = Peerstate::from_addr(context, contact.get_addr()).await {
             let fingerprint_normalized = dc_normalize_fingerprint(fingerprint.as_ref());
             if peerstate.public_key_fingerprint.is_some()
                 && &fingerprint_normalized == peerstate.public_key_fingerprint.as_ref().unwrap()
@@ -972,8 +972,7 @@ async fn mark_peer_as_verified(
     context: &Context,
     fingerprint: impl AsRef<str>,
 ) -> Result<(), Error> {
-    if let Some(ref mut peerstate) =
-        Peerstate::from_fingerprint(context, fingerprint.as_ref()).await
+    if let Ok(ref mut peerstate) = Peerstate::from_fingerprint(context, fingerprint.as_ref()).await
     {
         if peerstate.set_verified(
             PeerstateKeyType::PublicKey,

@@ -2591,8 +2591,11 @@ pub async fn add_device_msg(
             .sql
             .execute(
                 r#"
-INSERT INTO msgs (chat_id, from_id, to_id, timestamp, type, state, txt, param, rfc724_mid)
-  VALUES (?,?,?, ?,?,?, ?,?,?);
+INSERT INTO msgs (
+    chat_id, from_id, to_id, 
+    timestamp, type, state, 
+    txt, param, rfc724_mid)
+  VALUES (?,?,?,?,?,?,?,?,?);
 "#,
                 paramsx![
                     chat_id,
@@ -2635,18 +2638,14 @@ INSERT INTO msgs (chat_id, from_id, to_id, timestamp, type, state, txt, param, r
 pub async fn was_device_msg_ever_added(context: &Context, label: &str) -> Result<bool, Error> {
     ensure!(!label.is_empty(), "empty label");
 
-    if let Ok(count) = context
+    let exists = context
         .sql
-        .execute(
+        .exists(
             "SELECT label FROM devmsglabels WHERE label=?",
             paramsx![label],
         )
-        .await
-    {
-        return Ok(count > 0);
-    }
-
-    Ok(false)
+        .await?;
+    Ok(exists)
 }
 
 // needed on device-switches during export/import;

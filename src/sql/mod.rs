@@ -651,7 +651,7 @@ async fn open(
             while let Some(addr) = rows.next().await {
                 let (addr,): (String,) = addr?;
 
-                if let Some(ref mut peerstate) = Peerstate::from_addr(context, &addr).await {
+                if let Ok(ref mut peerstate) = Peerstate::from_addr(context, &addr).await {
                     peerstate.recalc_fingerprint();
                     peerstate.save_to_db(sql, false).await?;
                 }

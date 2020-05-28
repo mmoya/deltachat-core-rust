@@ -149,11 +149,17 @@ impl fmt::Display for Job {
 impl<'a> sqlx::FromRow<'a, sqlx::sqlite::SqliteRow<'a>> for Job {
     fn from_row(row: &sqlx::sqlite::SqliteRow<'a>) -> Result<Self, sqlx::Error> {
         use sqlx::Row;
+        let foreign_id: i64 = row.try_get("foreign_id")?;
+        if foreign_id < 0 {
+            return Err(sqlx::Error::Decode(
+                anyhow::anyhow!("invalid foreign_id").into(),
+            ));
+        }
 
         Ok(Job {
             job_id: row.try_get::<i64, _>("id")? as u32,
             action: row.try_get("action")?,
-            foreign_id: row.try_get::<i64, _>("foreign_id")? as u32,
+            foreign_id: foreign_id as u32,
             desired_timestamp: row.try_get("desired_timestamp")?,
             added_timestamp: row.try_get("added_timestamp")?,
             tries: row.try_get::<i64, _>("tries")? as u32,
@@ -1089,6 +1095,7 @@ LIMIT 1;
 
     let job: Option<Job> = loop {
         let job_res = context.sql.query_row_optional(query, params()).await;
+        dbg!(&job_res);
 
         match job_res {
             Ok(job) => break job,

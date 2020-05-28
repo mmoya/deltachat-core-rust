@@ -2,6 +2,8 @@
 use std::collections::HashSet;
 use std::convert::TryFrom;
 
+use anyhow::Result;
+
 use crate::aheader::*;
 use crate::constants::*;
 use crate::context::Context;
@@ -48,7 +50,7 @@ impl<'a> sqlx::FromRow<'a, sqlx::sqlite::SqliteRow<'a>> for Peerstate {
 
         res.last_seen = row.try_get("last_seen")?;
         res.last_seen_autocrypt = row.try_get("last_seen_autocrypt")?;
-        res.prefer_encrypt = row.try_get("prefer_encrypt")?;
+        res.prefer_encrypt = row.try_get("prefer_encrypted")?;
         res.gossip_timestamp = row.try_get("gossip_timestamp")?;
 
         res.public_key_fingerprint = row.try_get("public_key_fingerprint")?;
@@ -128,7 +130,7 @@ impl Peerstate {
         res
     }
 
-    pub async fn from_addr(context: &Context, addr: &str) -> Option<Peerstate> {
+    pub async fn from_addr(context: &Context, addr: &str) -> Result<Peerstate> {
         let query = r#"
 SELECT addr, last_seen, last_seen_autocrypt, prefer_encrypted, public_key, 
        gossip_timestamp, gossip_key, public_key_fingerprint, gossip_key_fingerprint, 
@@ -139,7 +141,7 @@ SELECT addr, last_seen, last_seen_autocrypt, prefer_encrypted, public_key,
         Self::from_stmt(context, query, paramsx![addr]).await
     }
 
-    pub async fn from_fingerprint(context: &Context, fingerprint: &str) -> Option<Peerstate> {
+    pub async fn from_fingerprint(context: &Context, fingerprint: &str) -> Result<Peerstate> {
         let query = r#"
 SELECT addr, last_seen, last_seen_autocrypt, prefer_encrypted, public_key,
        gossip_timestamp, gossip_key, public_key_fingerprint, gossip_key_fingerprint,
@@ -162,13 +164,15 @@ SELECT addr, last_seen, last_seen_autocrypt, prefer_encrypted, public_key,
         context: &Context,
         query: &str,
         params: sqlx::sqlite::SqliteArguments,
-    ) -> Option<Peerstate> {
+    ) -> Result<Peerstate> {
         /* all the above queries start with this: SELECT
         addr, last_seen, last_seen_autocrypt, prefer_encrypted,
         public_key, gossip_timestamp, gossip_key, public_key_fingerprint,
         gossip_key_fingerprint, verified_key, verified_key_fingerprint
         */
-        context.sql.query_row(query, params).await.ok()
+        let peerstate = context.sql.query_row(query, params).await?;
+
+        Ok(peerstate)
     }
 
     pub fn recalc_fingerprint(&mut self) {

@@ -141,7 +141,7 @@ async fn decode_openpgp(context: &Context, qr: &str) -> Lot {
     let peerstate = Peerstate::from_fingerprint(context, &fingerprint).await;
 
     if invitenumber.is_none() || auth.is_none() {
-        if let Some(peerstate) = peerstate {
+        if let Ok(peerstate) = peerstate {
             lot.state = LotState::QrFprOk;
 
             lot.id = Contact::add_or_lookup(

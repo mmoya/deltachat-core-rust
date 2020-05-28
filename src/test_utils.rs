@@ -25,9 +25,19 @@ pub(crate) struct TestContext {
 ///
 /// [Context]: crate::context::Context
 pub(crate) async fn test_context() -> TestContext {
+    pretty_env_logger::try_init_timed().ok();
+
     let dir = tempdir().unwrap();
     let dbfile = dir.path().join("db.sqlite");
     let ctx = Context::new("FakeOs".into(), dbfile.into()).await.unwrap();
+    let events = ctx.get_event_emitter();
+
+    async_std::task::spawn(async move {
+        while let Some(event) = events.recv().await {
+            log::info!("{:?}", event);
+        }
+    });
+
     TestContext { ctx, dir }
 }
 
