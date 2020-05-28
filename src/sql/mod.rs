@@ -1,13 +1,10 @@
 //! # SQLite wrapper
 
-use async_std::prelude::*;
-use async_std::sync::RwLock;
-
 use std::collections::HashSet;
 use std::path::Path;
-use std::time::Duration;
 
-use rusqlite::OpenFlags;
+use async_std::prelude::*;
+use async_std::sync::RwLock;
 use sqlx::{sqlite::SqliteQueryAs, Cursor};
 
 use crate::chat::{update_device_icon, update_saved_messages_icon};
@@ -25,10 +22,6 @@ pub use macros::*;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("Sqlite Error: {0:?}")]
-    Sql(#[from] rusqlite::Error),
-    #[error("Sqlite Connection Pool Error: {0:?}")]
-    ConnectionPool(#[from] r2d2::Error),
     #[error("Sqlite: Connection closed")]
     SqlNoConnection,
     #[error("Sqlite: Already open")]
@@ -52,14 +45,12 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// A wrapper around the underlying Sqlite3 object.
 #[derive(DebugStub)]
 pub struct Sql {
-    pool: RwLock<Option<r2d2::Pool<r2d2_sqlite::SqliteConnectionManager>>>,
     xpool: RwLock<Option<sqlx::SqlitePool>>,
 }
 
 impl Default for Sql {
     fn default() -> Self {
         Self {
-            pool: RwLock::new(None),
             xpool: RwLock::new(None),
         }
     }
@@ -71,11 +62,10 @@ impl Sql {
     }
 
     pub async fn is_open(&self) -> bool {
-        self.pool.read().await.is_some() && self.xpool.read().await.is_some()
+        self.xpool.read().await.is_some()
     }
 
     pub async fn close(&self) {
-        let _ = self.pool.write().await.take();
         let _ = self.xpool.write().await.take();
         // drop closes the connection
     }
@@ -606,40 +596,13 @@ async fn open(
         return Err(Error::SqlAlreadyOpen.into());
     }
 
-    let mut open_flags = OpenFlags::SQLITE_OPEN_NO_MUTEX;
     if readonly {
-        open_flags.insert(OpenFlags::SQLITE_OPEN_READ_ONLY);
-    } else {
-        open_flags.insert(OpenFlags::SQLITE_OPEN_READ_WRITE);
-        open_flags.insert(OpenFlags::SQLITE_OPEN_CREATE);
-    }
-
-    // this actually creates min_idle database handles just now.
-    // therefore, with_init() must not try to modify the database as otherwise
-    // we easily get busy-errors (eg. table-creation, journal_mode etc. should be done on only one handle)
-    let mgr = r2d2_sqlite::SqliteConnectionManager::file(dbfile.as_ref())
-        .with_flags(open_flags)
-        .with_init(|c| {
-            c.execute_batch(&format!(
-                "PRAGMA secure_delete=on; PRAGMA busy_timeout = {};",
-                Duration::from_secs(10).as_millis()
-            ))?;
-            Ok(())
-        });
-    let pool = r2d2::Pool::builder()
-        .min_idle(Some(2))
-        .max_size(10)
-        .connection_timeout(Duration::from_secs(60))
-        .build(mgr)
-        .map_err(Error::ConnectionPool)?;
-
-    {
-        *sql.pool.write().await = Some(pool);
+        // TODO: readonly mode
     }
 
     let xpool = sqlx::SqlitePool::builder()
         .min_size(1)
-        .max_size(1)
+        .max_size(1) // workaround for current locking issues in sqlx
         .build(&format!("sqlite://{}", dbfile.as_ref().to_string_lossy()))
         .await?;
 
@@ -648,15 +611,6 @@ async fn open(
     }
 
     if !readonly {
-        // journal_mode is persisted, it is sufficient to change it only for one handle.
-        // (nb: execute() always returns errors for this PRAGMA call, just discard it.
-        // but even if execute() would handle errors more gracefully, we should continue on errors -
-        // systems might not be able to handle WAL, in which case the standard-journal is used.
-        // that may be not optimal, but better than not working at all :)
-        sql.execute("PRAGMA journal_mode=WAL;", paramsx![])
-            .await
-            .ok();
-
         let mut exists_before_update = false;
         let mut dbversion_before_update: i32 = -1;
 

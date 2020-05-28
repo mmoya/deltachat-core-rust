@@ -1,4 +1,4 @@
-use deltachat_derive::{FromSql, ToSql};
+use deltachat_derive::*;
 
 /// An object containing a set of values.
 /// The meaning of the values is defined by the function returning the object.
@@ -20,7 +20,7 @@ pub struct Lot {
 }
 
 #[repr(u8)]
-#[derive(Debug, Display, Clone, Copy, PartialEq, Eq, FromPrimitive, ToPrimitive, ToSql, FromSql)]
+#[derive(Debug, Display, Clone, Copy, PartialEq, Eq, FromPrimitive, ToPrimitive, Sqlx)]
 pub enum Meaning {
     None = 0,
     Text1Draft = 1,
@@ -65,7 +65,7 @@ impl Lot {
 }
 
 #[repr(i32)]
-#[derive(Debug, Display, Clone, Copy, PartialEq, Eq, FromPrimitive, ToPrimitive, ToSql, FromSql)]
+#[derive(Debug, Display, Clone, Copy, PartialEq, Eq, FromPrimitive, ToPrimitive, Sqlx)]
 pub enum LotState {
     // Default
     Undefined = 0,

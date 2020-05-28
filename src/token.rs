@@ -11,9 +11,7 @@ use crate::context::Context;
 use crate::dc_tools::*;
 
 /// Token namespace
-#[derive(
-    Debug, Display, Clone, Copy, PartialEq, Eq, FromPrimitive, ToPrimitive, ToSql, FromSql, Sqlx,
-)]
+#[derive(Debug, Display, Clone, Copy, PartialEq, Eq, FromPrimitive, ToPrimitive, Sqlx)]
 #[repr(i32)]
 pub enum Namespace {
     Unknown = 0,

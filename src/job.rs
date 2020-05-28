@@ -38,9 +38,7 @@ use crate::sql;
 const JOB_RETRIES: u32 = 17;
 
 /// Thread IDs
-#[derive(
-    Debug, Display, Copy, Clone, PartialEq, Eq, FromPrimitive, ToPrimitive, FromSql, ToSql, Sqlx,
-)]
+#[derive(Debug, Display, Copy, Clone, PartialEq, Eq, FromPrimitive, ToPrimitive, Sqlx)]
 #[repr(i32)]
 pub(crate) enum Thread {
     Unknown = 0,
@@ -78,18 +76,7 @@ impl Default for Thread {
 }
 
 #[derive(
-    Debug,
-    Display,
-    Copy,
-    Clone,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    FromPrimitive,
-    ToPrimitive,
-    FromSql,
-    ToSql,
-    Sqlx,
+    Debug, Display, Copy, Clone, PartialEq, Eq, PartialOrd, FromPrimitive, ToPrimitive, Sqlx,
 )]
 #[repr(i32)]
 pub enum Action {
