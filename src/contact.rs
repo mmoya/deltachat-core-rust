@@ -1,8 +1,10 @@
 //! Contacts module
 
 use async_std::path::PathBuf;
+use async_std::prelude::*;
 use deltachat_derive::*;
 use itertools::Itertools;
+use sqlx::sqlite::SqliteQueryAs;
 
 use crate::aheader::EncryptPreference;
 use crate::chat::ChatId;
@@ -586,35 +588,32 @@ WHERE from_id=? AND state=?;
                     .map(|s| s.as_ref().to_string())
                     .unwrap_or_default()
             );
-            context
-                .sql
-                .query_map(
-                    "SELECT c.id FROM contacts c \
-                 LEFT JOIN acpeerstates ps ON c.addr=ps.addr  \
-                 WHERE c.addr!=?1 \
-                 AND c.id>?2 \
-                 AND c.origin>=?3 \
-                 AND c.blocked=0 \
-                 AND (c.name LIKE ?4 OR c.addr LIKE ?5) \
-                 AND (1=?6 OR LENGTH(ps.verified_key_fingerprint)!=0)  \
-                 ORDER BY LOWER(c.name||c.addr),c.id;",
-                    paramsv![
-                        self_addr,
-                        DC_CONTACT_ID_LAST_SPECIAL as i32,
-                        Origin::IncomingReplyTo,
-                        s3str_like_cmd,
-                        s3str_like_cmd,
-                        if flag_verified_only { 0i32 } else { 1i32 },
-                    ],
-                    |row| row.get::<_, i32>(0),
-                    |ids| {
-                        for id in ids {
-                            ret.push(id? as u32);
-                        }
-                        Ok(())
-                    },
-                )
-                .await?;
+            let pool = context.sql.get_pool().await?;
+            let mut rows = sqlx::query_as(
+                r#"
+SELECT c.id FROM contacts c
+  LEFT JOIN acpeerstates ps ON c.addr=ps.addr
+  WHERE c.addr!=?1
+    AND c.id>?2
+    AND c.origin>=?3
+    AND c.blocked=0
+    AND (c.name LIKE ?4 OR c.addr LIKE ?5)
+    AND (1=?6 OR LENGTH(ps.verified_key_fingerprint)!=0)
+  ORDER BY LOWER(c.name||c.addr),c.id
+"#,
+            )
+            .bind(&self_addr)
+            .bind(DC_CONTACT_ID_LAST_SPECIAL as i32)
+            .bind(Origin::IncomingReplyTo)
+            .bind(&s3str_like_cmd)
+            .bind(&s3str_like_cmd)
+            .bind(if flag_verified_only { 0i32 } else { 1i32 })
+            .fetch(&pool);
+
+            while let Some(id) = rows.next().await {
+                let (id,): (i32,) = id?;
+                ret.push(id as u32);
+            }
 
             let self_name = context
                 .get_config(Config::Displayname)
@@ -635,17 +634,15 @@ WHERE from_id=? AND state=?;
         } else {
             add_self = true;
 
-            context.sql.query_map(
-                "SELECT id FROM contacts WHERE addr!=?1 AND id>?2 AND origin>=?3 AND blocked=0 ORDER BY LOWER(name||addr),id;",
-                paramsv![self_addr, DC_CONTACT_ID_LAST_SPECIAL as i32, 0x100],
-                |row| row.get::<_, i32>(0),
-                |ids| {
-                    for id in ids {
-                        ret.push(id? as u32);
-                    }
-                    Ok(())
-                }
-            ).await?;
+            let pool = context.sql.get_pool().await?;
+            let mut rows = sqlx::query_as(
+                "SELECT id FROM contacts WHERE addr!=?1 AND id>?2 AND origin>=?3 AND blocked=0 ORDER BY LOWER(name||addr),id;"
+            ).bind(self_addr).bind(DC_CONTACT_ID_LAST_SPECIAL as i32).bind(0x100).fetch(&pool);
+
+            while let Some(id) = rows.next().await {
+                let (id,): (i32,) = id?;
+                ret.push(id as u32);
+            }
         }
 
         if flag_add_self && add_self {
@@ -671,17 +668,15 @@ WHERE from_id=? AND state=?;
     pub async fn get_all_blocked(context: &Context) -> Vec<u32> {
         context
             .sql
-            .query_map(
+            .query_values(
                 "SELECT id FROM contacts WHERE id>? AND blocked!=0 ORDER BY LOWER(name||addr),id;",
-                paramsv![DC_CONTACT_ID_LAST_SPECIAL as i32],
-                |row| row.get::<_, u32>(0),
-                |ids| {
-                    ids.collect::<std::result::Result<Vec<_>, _>>()
-                        .map_err(Into::into)
-                },
+                paramsx![DC_CONTACT_ID_LAST_SPECIAL as i32],
             )
             .await
             .unwrap_or_default()
+            .into_iter()
+            .map(|id: i64| id as u32)
+            .collect()
     }
 
     /// Returns a textual summary of the encryption state for the contact.

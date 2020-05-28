@@ -1,8 +1,9 @@
+use async_std::prelude::*;
 use itertools::join;
+use mailparse::SingleInfo;
 use num_traits::FromPrimitive;
 use sha2::{Digest, Sha256};
-
-use mailparse::SingleInfo;
+use sqlx::sqlite::SqliteQueryAs;
 
 use crate::chat::{self, Chat, ChatId};
 use crate::config::Config;
@@ -1251,7 +1252,7 @@ async fn create_or_lookup_adhoc_group(
 
     // create a new ad-hoc group
     // - there is no need to check if this group exists; otherwise we would have caught it above
-    let grpid = create_adhoc_grp_id(context, &member_ids).await;
+    let grpid = create_adhoc_grp_id(context, &member_ids).await?;
     if grpid.is_empty() {
         warn!(
             context,
@@ -1330,7 +1331,7 @@ async fn create_group_record(
     chat_id
 }
 
-async fn create_adhoc_grp_id(context: &Context, member_ids: &[u32]) -> String {
+async fn create_adhoc_grp_id(context: &Context, member_ids: &[u32]) -> Result<String> {
     /* algorithm:
     - sort normalized, lowercased, e-mail addresses alphabetically
     - put all e-mail addresses into a single string, separate the address by a single comma
@@ -1344,30 +1345,20 @@ async fn create_adhoc_grp_id(context: &Context, member_ids: &[u32]) -> String {
         .unwrap_or_else(|| "no-self".to_string())
         .to_lowercase();
 
-    let members = context
-        .sql
-        .query_map(
-            format!(
-                "SELECT addr FROM contacts WHERE id IN({}) AND id!=1", // 1=DC_CONTACT_ID_SELF
-                member_ids_str
-            ),
-            paramsv![],
-            |row| row.get::<_, String>(0),
-            |rows| {
-                let mut addrs = rows.collect::<std::result::Result<Vec<_>, _>>()?;
-                addrs.sort();
-                let mut acc = member_cs.clone();
-                for addr in &addrs {
-                    acc += ",";
-                    acc += &addr.to_lowercase();
-                }
-                Ok(acc)
-            },
-        )
-        .await
-        .unwrap_or_else(|_| member_cs);
+    let query = format!(
+        "SELECT addr FROM contacts WHERE id IN({}) AND id!=1", // 1=DC_CONTACT_ID_SELF
+        member_ids_str
+    );
+    let mut addrs: Vec<String> = context.sql.query_values(query, paramsx![]).await?;
+    addrs.sort();
 
-    hex_hash(&members)
+    let mut acc = member_cs;
+    for addr in &addrs {
+        acc += ",";
+        acc += &addr.to_lowercase();
+    }
+
+    Ok(hex_hash(&acc))
 }
 
 fn hex_hash(s: impl AsRef<str>) -> String {
@@ -1394,8 +1385,7 @@ async fn search_chat_ids_by_contact_ids(
         if !contact_ids.is_empty() {
             contact_ids.sort();
             let contact_ids_str = join(contact_ids.iter().map(|x| x.to_string()), ",");
-            context.sql.query_map(
-                format!(
+            let query = format!(
                     "SELECT DISTINCT cc.chat_id, cc.contact_id
                        FROM chats_contacts cc
                        LEFT JOIN chats c ON c.id=cc.chat_id
@@ -1404,37 +1394,37 @@ async fn search_chat_ids_by_contact_ids(
                         AND cc.contact_id!=1
                       ORDER BY cc.chat_id, cc.contact_id;", // 1=DC_CONTACT_ID_SELF
                     contact_ids_str
-                ),
-                paramsv![],
-                |row| Ok((row.get::<_, ChatId>(0)?, row.get::<_, u32>(1)?)),
-                |rows| {
-                    let mut last_chat_id = ChatId::new(0);
-                    let mut matches = 0;
-                    let mut mismatches = 0;
+            );
 
-                    for row in rows {
-                        let (chat_id, contact_id) = row?;
-                        if chat_id != last_chat_id {
-                            if matches == contact_ids.len() && mismatches == 0 {
-                                chat_ids.push(last_chat_id);
-                            }
-                            last_chat_id = chat_id;
-                            matches = 0;
-                            mismatches = 0;
-                        }
-                        if matches < contact_ids.len() && contact_id == contact_ids[matches] {
-                            matches += 1;
-                        } else {
-                            mismatches += 1;
-                        }
-                    }
+            let pool = context.sql.get_pool().await?;
+            let mut rows = sqlx::query_as(&query).fetch(&pool);
 
+            let mut last_chat_id = ChatId::new(0);
+            let mut matches = 0;
+            let mut mismatches = 0;
+
+            while let Some(row) = rows.next().await {
+                let (chat_id, contact_id): (ChatId, i64) = row?;
+                let contact_id = contact_id as u32;
+
+                if chat_id != last_chat_id {
                     if matches == contact_ids.len() && mismatches == 0 {
                         chat_ids.push(last_chat_id);
                     }
-                Ok(())
+                    last_chat_id = chat_id;
+                    matches = 0;
+                    mismatches = 0;
                 }
-            ).await?;
+                if matches < contact_ids.len() && contact_id == contact_ids[matches] {
+                    matches += 1;
+                } else {
+                    mismatches += 1;
+                }
+            }
+
+            if matches == contact_ids.len() && mismatches == 0 {
+                chat_ids.push(last_chat_id);
+            }
         }
     }
 
@@ -1485,31 +1475,25 @@ async fn check_verified_properties(
     }
     let to_ids_str = join(to_ids.iter().map(|x| x.to_string()), ",");
 
-    let rows = context
-        .sql
-        .query_map(
-            format!(
-                "SELECT c.addr, LENGTH(ps.verified_key_fingerprint)  FROM contacts c  \
+    let query = format!(
+        "SELECT c.addr, LENGTH(ps.verified_key_fingerprint)  FROM contacts c  \
              LEFT JOIN acpeerstates ps ON c.addr=ps.addr  WHERE c.id IN({}) ",
-                to_ids_str
-            ),
-            paramsv![],
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, i32>(1).unwrap_or(0))),
-            |rows| {
-                rows.collect::<std::result::Result<Vec<_>, _>>()
-                    .map_err(Into::into)
-            },
-        )
-        .await?;
+        to_ids_str
+    );
 
-    for (to_addr, _is_verified) in rows.into_iter() {
+    let pool = context.sql.get_pool().await?;
+    let mut rows = sqlx::query_as(&query).fetch(&pool);
+
+    while let Some(row) = rows.next().await {
+        let (to_addr, is_verified): (String, i32) = row?;
+
         info!(
             context,
             "check_verified_properties: {:?} self={:?}",
             to_addr,
             context.is_self_addr(&to_addr).await
         );
-        let mut is_verified = _is_verified != 0;
+        let mut is_verified = is_verified != 0;
         let peerstate = Peerstate::from_addr(context, &to_addr).await;
 
         // mark gossiped keys (if any) as verified
