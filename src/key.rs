@@ -107,7 +107,7 @@ pub trait DcKey: Serialize + Deserializable + KeyTrait + Clone {
 
     /// The fingerprint for the key.
     fn fingerprint(&self) -> Fingerprint {
-        Fingerprint::new_unchecked(KeyTrait::fingerprint(self))
+        Fingerprint::new(KeyTrait::fingerprint(self)).expect("Invalid fingerprint from rpgp")
     }
 }
 
@@ -364,10 +364,6 @@ impl Fingerprint {
             20 => Ok(Fingerprint(v)),
             _ => Err(FingerprintError::WrongLength),
         }
-    }
-
-    pub fn new_unchecked(v: Vec<u8>) -> Fingerprint {
-        Fingerprint(v)
     }
 
     /// Make a hex string from the fingerprint.
@@ -683,18 +679,22 @@ i8pcjGO+IZffvyZJVRWfVooBJmWWbPB1pueo3tx8w3+fcuzpxz+RLFKaPyqXO+dD
 
     #[test]
     fn test_fingerprint_hex() {
-        let fp = Fingerprint::new_unchecked(vec![1, 2, 4, 8, 16, 32, 64, 128, 255]);
-        assert_eq!(fp.hex(), "0102040810204080FF");
+        let fp = Fingerprint::new(vec![
+            1, 2, 4, 8, 16, 32, 64, 128, 255, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+        ])
+        .unwrap();
+        assert_eq!(fp.hex(), "0102040810204080FF0A0B0C0D0E0F1011121314");
     }
 
     #[test]
     fn test_fingerprint_to_string() {
-        let fp = Fingerprint::new_unchecked(vec![
-            1, 2, 4, 8, 16, 32, 64, 128, 255, 1, 2, 4, 8, 16, 32, 64, 128, 255,
-        ]);
+        let fp = Fingerprint::new(vec![
+            1, 2, 4, 8, 16, 32, 64, 128, 255, 1, 2, 4, 8, 16, 32, 64, 128, 255, 19, 20,
+        ])
+        .unwrap();
         assert_eq!(
             fp.to_string(),
-            "0102 0408 1020 4080 FF01\n0204 0810 2040 80FF"
+            "0102 0408 1020 4080 FF01\n0204 0810 2040 80FF 1314"
         );
     }
 }
