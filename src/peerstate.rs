@@ -184,18 +184,18 @@ impl<'a> Peerstate<'a> {
                 res.prefer_encrypt = EncryptPreference::from_i32(row.get(3)?).unwrap_or_default();
                 res.gossip_timestamp = row.get(5)?;
 
-                res.public_key_fingerprint = match row.get::<_, Option<String>>(7)? {
-                    None => None,
-                    Some(s) => Some(s.parse::<Fingerprint>()?),
-                };
-                res.gossip_key_fingerprint = match row.get::<_, Option<String>>(8)? {
-                    None => None,
-                    Some(s) => Some(s.parse::<Fingerprint>()?),
-                };
-                res.verified_key_fingerprint = match row.get::<_, Option<String>>(10)? {
-                    None => None,
-                    Some(s) => Some(s.parse::<Fingerprint>()?),
-                };
+                res.public_key_fingerprint = row
+                    .get::<_, Option<String>>(7)?
+                    .map(|s| s.parse::<Fingerprint>())
+                    .transpose()?;
+                res.gossip_key_fingerprint = row
+                    .get::<_, Option<String>>(8)?
+                    .map(|s| s.parse::<Fingerprint>())
+                    .transpose()?;
+                res.verified_key_fingerprint = row
+                    .get::<_, Option<String>>(10)?
+                    .map(|s| s.parse::<Fingerprint>())
+                    .transpose()?;
                 res.public_key = row
                     .get(4)
                     .ok()
